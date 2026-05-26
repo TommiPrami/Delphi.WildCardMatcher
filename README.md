@@ -38,50 +38,69 @@ uses
   Delphi.WildCardMatcher;
 ```
 
-### Single pattern
+### One-off match
+
+`TWildCard.Create` (no patterns) gives you an empty matcher you can use
+for ad-hoc one-shot calls. Case-sensitivity is set at `Create` time.
 
 ```pascal
-if TWildCard.Match(AFileName, '*.pas') then
+if TWildCard.Create.Match(AFileName, '*.pas') then
   // ...
 
 // Case-sensitive
-if TWildCard.Match('Unit1.PAS', '*.pas', True) then
+if TWildCard.Create(True).Match('Unit1.PAS', '*.pas') then
   // ... will NOT match because of the trailing-case difference
 ```
 
-### Multiple patterns (TArray<string>)
+### Pre-registered patterns (recommended for repeated matching)
 
-Short-circuits on the first match.
+When you match many inputs against the same fixed pattern set, register
+the patterns at `Create` so the per-call upper-casing happens once. Then
+`Match(input)` walks the registered set short-circuiting on the first hit.
 
 ```pascal
-const
-  PASCAL_EXTS: TArray<string> = ['*.pas', '*.dpr', '*.dpk', '*.inc'];
+var
+  LMask: TWildCard;
 begin
-  if TWildCard.Match(AFileName, PASCAL_EXTS) then
-    AddToProjectFileList(AFileName);
+  LMask := TWildCard.Create(['*.pas', '*.dpr', '*.dpk', '*.inc']);
+  for var LFile in TDirectory.GetFiles(ARoot) do
+    if LMask.Match(LFile) then
+      AddToProjectFileList(LFile);
 end;
 ```
 
-### Multiple patterns (TStrings)
-
-Same semantics; handy when the patterns come from a `TStringList`,
-`Memo.Lines`, an `.ini` file, etc.
+The constructor accepts a single pattern, a `TArray<string>`, or a
+`TStrings` (handy for patterns loaded from a `TStringList` /
+`Memo.Lines` / `.ini` file):
 
 ```pascal
 var
   LMasks: TStringList;
+  LIgnore: TWildCard;
 begin
   LMasks := TStringList.Create;
   try
     LMasks.LoadFromFile('ignore-masks.txt');
+    LIgnore := TWildCard.Create(LMasks);
 
     for var LFile in TDirectory.GetFiles(ARoot) do
-      if not TWildCard.Match(LFile, LMasks) then
+      if not LIgnore.Match(LFile) then
         ProcessFile(LFile);
   finally
     LMasks.Free;
   end;
 end;
+```
+
+### Ad-hoc pattern on a registered instance
+
+You can pass an extra one-off pattern to an existing instance. By
+default only that pattern is tried; pass `True` as the third argument
+to also try the registered set.
+
+```pascal
+LMask.Match(LFile, '*.dproj');           // only the ad-hoc pattern
+LMask.Match(LFile, '*.dproj', True);     // ad-hoc + registered set
 ```
 
 ### Structural matching with `|`
@@ -90,7 +109,7 @@ Because `|` requires a real line break, you can sketch the shape of a
 multi-line text without caring about what is on each line:
 
 ```pascal
-TWildCard.Match(LSourceCode, 'unit *;|interface|*|implementation|*|end.');
+TWildCard.Create.Match(LSourceCode, 'unit *;|interface|*|implementation|*|end.');
 ```
 
 This matches any Pascal unit whose top-level structure has `interface`
@@ -103,14 +122,30 @@ mixing or how many blank lines separate the sections.
 type
   TWildCard = record
   public
-    class function Match(const AInput, APattern: string;
-      const ACaseSensitive: Boolean = False): Boolean; overload; static;
+    // Constructors - ACaseSensitive is locked in for the lifetime of the
+    // instance and defaults to case-insensitive (Windows convention).
+    class function Create(const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+    class function Create(const APattern: string;
+      const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+    class function Create(const APatterns: TArray<string>;
+      const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+    class function Create(const APatterns: TStrings;
+      const ACaseSensitive: Boolean = False): TWildCard; overload; static;
 
-    class function Match(const AInput: string; const APatterns: TArray<string>;
-      const ACaseSensitive: Boolean = False): Boolean; overload; static;
+    // Match against the registered set only
+    function Match(const AInput: string): Boolean; overload;
 
-    class function Match(const AInput: string; const APatterns: TStrings;
-      const ACaseSensitive: Boolean = False): Boolean; overload; static;
+    // Match against an ad-hoc pattern; AAlsoMatchRegistered=True also
+    // tries the registered set after the ad-hoc one fails.
+    function Match(const AInput, APattern: string;
+      const AAlsoMatchRegistered: Boolean = False): Boolean; overload;
+    function Match(const AInput: string; const APatterns: TArray<string>;
+      const AAlsoMatchRegistered: Boolean = False): Boolean; overload;
+    function Match(const AInput: string; const APatterns: TStrings;
+      const AAlsoMatchRegistered: Boolean = False): Boolean; overload;
+
+    property CaseSensitive: Boolean read FCaseSensitive;
+    property RegisteredPatterns: TArray<string> read FPatterns;
   end;
 ```
 

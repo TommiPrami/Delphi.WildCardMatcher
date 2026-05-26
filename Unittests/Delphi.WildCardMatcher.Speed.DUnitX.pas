@@ -75,6 +75,7 @@ end;
 procedure TWildCardSpeedDUnitX.RunBenchmark(const AScenarioLabel, APattern: string; const AExpectedMatchesPerIter, ALoopCount: Integer;
   var  ASpeedInfo: string; const ACaseSensitive: Boolean);
 var
+  LMatcher: TWildCard;
   LWatch: TStopwatch;
   LIter, LIdx, LMatches: Integer;
   LElapsedMs, LNsPerOp, LOpsPerMs: Double;
@@ -83,11 +84,16 @@ begin
   LMatches := 0;
   ASpeedInfo := '';
 
+  // Create the matcher once outside the timed region with the requested
+  // case mode - the per-call cost in the loop is then identical to what
+  // the old static API used to do.
+  LMatcher := TWildCard.Create(ACaseSensitive);
+
   LWatch := TStopwatch.StartNew;
 
   for LIter := 1 to ALoopCount do
     for LIdx := 0 to High(FInputs) do
-      if TWildCard.Match(FInputs[LIdx], APattern, ACaseSensitive) then
+      if LMatcher.Match(FInputs[LIdx], APattern) then
         Inc(LMatches);
 
   LWatch.Stop;
