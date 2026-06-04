@@ -1,30 +1,47 @@
-﻿unit Delphi.WildCardMatcher;
+unit Delphi.WildCardMatcher;
 
 // Windows / DOS style wildcard matcher with a few common extensions.
 //
-//   *       matches zero or more characters (line-agnostic)
-//   ?       matches exactly one character
-//   #       matches exactly one decimal digit (0-9)
-//   |       matches one or more line endings (CRLF / LF / CR, mix-tolerant)
-//   [abc]   matches any one of the characters in the set
-//   [!abc]  matches any one character NOT in the set
-//   [a-z]   matches any one character in the range (low..high, ascending)
+//   *                  matches zero or more characters
+//   ?                  matches exactly one character
+//   #                  matches exactly one decimal digit (0-9)
+//   [abc]              matches any one of the characters in the set
+//   [!abc]             matches any one character NOT in the set
+//   [a-z]              matches any one character in the range (low..high, ascending)
+//   ["foo"|"bar"]      matches the literal "foo" OR the literal "bar" at this position
+//   [!"foo"|"bar"]     matches a slice of length max(altLen) that is NEITHER prefix
 //
 // Sets may combine literals and ranges, e.g. '[a-zA-Z0-9_]'.
-// A literal ']' inside a set must be the first content character: '[]abc]'
-// matches ']', 'a', 'b' or 'c'.  '[!]abc]' negates the same set.
+// A literal ']' inside a single-char class must be the first content character:
+// '[]abc]' matches ']', 'a', 'b' or 'c'.  '[!]abc]' negates the same set.
 // A '-' that is the first or last content character is treated as a literal,
 // e.g. '[-x]' matches '-' or 'x'; '[a-]' matches 'a' or '-'.
 //
-// '|' is the inverse of '*' for line structure: '*' matches anything
-// (including newlines), '|' REQUIRES at least one newline.  A CRLF pair is
-// one line ending, lone CR and lone LF each count as one, so mixed-EOL
-// files are handled without surprises.  Use '||' the same as '|' (collapses
-// like '**' collapses to '*').
+// Two flavours of '[...]':
 //
-// '|' is the chosen operator because the characters Windows forbids in file
-// names are '< > : " / \ | ? *', and '*' / '?' are already taken.  This
-// keeps wildcard patterns safe to use as literal file masks.
+//   Single-char class: '[abc]', '[a-z]', '[!xyz]' - matches exactly one input
+//   character.  This is the legacy DOS form.
+//
+//   Quoted-string alternation: '["foo"|"bar"|"baz"]' - matches one of the
+//   listed literal strings at the current position and consumes its length.
+//   '|' inside the brackets is the alternative separator.  Auto-detected:
+//   if the first content character (after an optional '!') is '"', the
+//   class is parsed in alternation form; otherwise the legacy single-char
+//   rules apply.
+//
+//   Negated alternation '[!"foo"|"bar"]' succeeds when NONE of the listed
+//   alternatives is a prefix at the current position; it then consumes the
+//   length of the LONGEST alternative.  When the input has fewer characters
+//   left than the longest alternative, the match fails (just like the
+//   positive form would when there is not enough input to span the alt).
+//
+//   Empty quoted alternative ('""') is allowed and matches zero characters
+//   (always succeeds, consumes nothing).  Backslashes / quote escapes are
+//   NOT supported - quoted alternation is intended for file-mask use and
+//   Windows file names cannot contain the characters '[', ']', '|' or '"'
+//   to begin with, so the syntax stays safe to embed in literal masks.
+//
+//   '"' OUTSIDE a '[...]' class is a plain literal character.
 //
 // Matching is case-insensitive by default (Windows convention); pass
 // ACaseSensitive = True for ordinal comparison.  The case-sensitive and
@@ -69,14 +86,21 @@ type
     FCaseSensitive: Boolean;
     // Case-independent helpers
     class function IsAsciiDigit(const AChar: Char): Boolean; static; inline;
-    class function IsEolChar(const AChar: Char): Boolean; static; inline;
-    class function ConsumeOneEol(const AInput: string; const AIndex: Integer): Integer; static; inline;
     class function FindClassEnd(const APattern: string; const AStart: Integer): Integer; static;
+    class function IsQuotedAltClass(const APattern: string; const AClassStart: Integer): Boolean; static;
     // Case-sensitive path (direct ordinal compare, no ToUpper calls)
     class function CharInClassCS(const APattern: string; const AStart, AEnd: Integer; const AChar: Char): Boolean; static;
+    class function AltMatchesAtCS(const AInput: string; const AInputIdx: Integer;
+      const APattern: string; const AAltStart, AAltLen: Integer): Boolean; static;
+    class function MatchQuotedAltClassCS(const AInput, APattern: string;
+      const AInputIdx, AClassStart, AClassEnd: Integer): Boolean; static;
     class function MatchRecursiveCS(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean; static;
     // Case-insensitive path (ToUpper compare)
     class function CharInClassCI(const APattern: string; const AStart, AEnd: Integer; const AChar: Char): Boolean; static;
+    class function AltMatchesAtCI(const AInput: string; const AInputIdx: Integer;
+      const APattern: string; const AAltStart, AAltLen: Integer): Boolean; static;
+    class function MatchQuotedAltClassCI(const AInput, APattern: string;
+      const AInputIdx, AClassStart, AClassEnd: Integer): Boolean; static;
     class function MatchRecursiveCI(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean; static;
     // Walks FPatterns and returns True on the first match.  FPatterns are
     // already in the correct form (pre-upper-cased for CI), so no per-call
@@ -185,38 +209,63 @@ begin
   Result := (AChar >= '0') and (AChar <= '9');
 end;
 
-class function TWildCard.IsEolChar(const AChar: Char): Boolean;
+class function TWildCard.IsQuotedAltClass(const APattern: string; const AClassStart: Integer): Boolean;
+var
+  LIndex: Integer;
 begin
-  Result := (AChar = #13) or (AChar = #10);
-end;
+  // AClassStart points at '['.  Returns True if the class is in quoted
+  // alternation form, i.e. the first content character (after an optional
+  // negation '!') is a '"'.  Caller has already validated AClassStart.
+  LIndex := AClassStart + 1;
 
-class function TWildCard.ConsumeOneEol(const AInput: string; const AIndex: Integer): Integer;
-begin
-  // CRLF is consumed as a single unit; lone CR or lone LF count as one each.
-  // Caller must ensure the position holds a CR or LF.
-  if (AInput[AIndex] = #13) and (AIndex < Length(AInput)) and (AInput[AIndex + 1] = #10) then
-    Result := AIndex + 2
-  else
-    Result := AIndex + 1;
+  if (LIndex <= Length(APattern)) and (APattern[LIndex] = '!') then
+    Inc(LIndex);
+
+  Result := (LIndex <= Length(APattern)) and (APattern[LIndex] = '"');
 end;
 
 class function TWildCard.FindClassEnd(const APattern: string; const AStart: Integer): Integer;
 var
   LIndex: Integer;
+  LIsQuotedAlt: Boolean;
 begin
   // AStart points at '['. Returns index of ']' that closes the class, or 0
-  // if the class is unterminated.  First content char ']' is treated as a
-  // literal (so '[]abc]' is a valid class containing ']abc').
+  // if the class is unterminated.
+  //
+  // Two scanning modes:
+  //   Legacy single-char class: leading ']' is treated as a literal so
+  //     '[]abc]' is a valid class containing ']abc'.
+  //   Quoted-alternation class: ']' inside a '"..."' span is part of the
+  //     alternative literal and does NOT close the class.  An unterminated
+  //     '"' (no closing quote before end of pattern) makes the class
+  //     malformed (returns 0).
   LIndex := AStart + 1;
 
   if (LIndex <= Length(APattern)) and (APattern[LIndex] = '!') then
     Inc(LIndex);
 
-  if (LIndex <= Length(APattern)) and (APattern[LIndex] = ']') then
+  LIsQuotedAlt := (LIndex <= Length(APattern)) and (APattern[LIndex] = '"');
+
+  if (not LIsQuotedAlt) and (LIndex <= Length(APattern)) and (APattern[LIndex] = ']') then
     Inc(LIndex);
 
   while LIndex <= Length(APattern) do
   begin
+    if LIsQuotedAlt and (APattern[LIndex] = '"') then
+    begin
+      // Skip past the alternative's content to the closing '"'.
+      Inc(LIndex);
+
+      while (LIndex <= Length(APattern)) and (APattern[LIndex] <> '"') do
+        Inc(LIndex);
+
+      if LIndex > Length(APattern) then
+        Exit(0);
+
+      Inc(LIndex);
+      Continue;
+    end;
+
     if APattern[LIndex] = ']' then
       Exit(LIndex);
 
@@ -269,6 +318,134 @@ begin
     Result := not Result;
 end;
 
+class function TWildCard.AltMatchesAtCS(const AInput: string; const AInputIdx: Integer;
+  const APattern: string; const AAltStart, AAltLen: Integer): Boolean;
+var
+  LIdx: Integer;
+begin
+  // Empty alternative ('""') matches zero characters - always True.
+  if AAltLen = 0 then
+    Exit(True);
+
+  if AInputIdx + AAltLen - 1 > Length(AInput) then
+    Exit(False);
+
+  for LIdx := 0 to AAltLen - 1 do
+    if AInput[AInputIdx + LIdx] <> APattern[AAltStart + LIdx] then
+      Exit(False);
+
+  Result := True;
+end;
+
+class function TWildCard.MatchQuotedAltClassCS(const AInput, APattern: string;
+  const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
+var
+  LIdx: Integer;
+  LNegated: Boolean;
+  LAfterClass: Integer;
+  LAltStart, LAltLen: Integer;
+  LAltContentEnd: Integer;
+  LAfterAlt: Integer;
+  LMaxLen: Integer;
+  LAnyMatched: Boolean;
+begin
+  // AClassStart points at '[', AClassEnd at the closing ']'.  Iterates the
+  // alternatives, recursing into MatchRecursiveCS on the remainder of the
+  // pattern for each.  For the negated form, the longest alternative
+  // dictates how much input the class consumes when it succeeds.
+  //
+  // Note: the separator check is done BEFORE attempting to match an alt,
+  // so a malformed class (missing '|' between alts, stray garbage) fails
+  // unconditionally regardless of what the first alt would have matched.
+  LIdx := AClassStart + 1;
+  LNegated := APattern[LIdx] = '!';
+
+  if LNegated then
+    Inc(LIdx);
+
+  LAfterClass := AClassEnd + 1;
+
+  if not LNegated then
+  begin
+    while LIdx < AClassEnd do
+    begin
+      if APattern[LIdx] <> '"' then
+        Exit(False);
+
+      LAltStart := LIdx + 1;
+      LAltContentEnd := LAltStart;
+
+      while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
+        Inc(LAltContentEnd);
+
+      if LAltContentEnd >= AClassEnd then
+        Exit(False);
+
+      LAltLen := LAltContentEnd - LAltStart;
+      LAfterAlt := LAltContentEnd + 1;
+
+      if (LAfterAlt < AClassEnd) and (APattern[LAfterAlt] <> '|') then
+        Exit(False);
+
+      if AltMatchesAtCS(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
+        if MatchRecursiveCS(AInput, APattern, AInputIdx + LAltLen, LAfterClass) then
+          Exit(True);
+
+      if LAfterAlt < AClassEnd then
+        LIdx := LAfterAlt + 1
+      else
+        LIdx := LAfterAlt;
+    end;
+
+    Result := False;
+  end
+  else
+  begin
+    LMaxLen := 0;
+    LAnyMatched := False;
+
+    while LIdx < AClassEnd do
+    begin
+      if APattern[LIdx] <> '"' then
+        Exit(False);
+
+      LAltStart := LIdx + 1;
+      LAltContentEnd := LAltStart;
+
+      while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
+        Inc(LAltContentEnd);
+
+      if LAltContentEnd >= AClassEnd then
+        Exit(False);
+
+      LAltLen := LAltContentEnd - LAltStart;
+      LAfterAlt := LAltContentEnd + 1;
+
+      if (LAfterAlt < AClassEnd) and (APattern[LAfterAlt] <> '|') then
+        Exit(False);
+
+      if LAltLen > LMaxLen then
+        LMaxLen := LAltLen;
+
+      if (not LAnyMatched) and AltMatchesAtCS(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
+        LAnyMatched := True;
+
+      if LAfterAlt < AClassEnd then
+        LIdx := LAfterAlt + 1
+      else
+        LIdx := LAfterAlt;
+    end;
+
+    if LAnyMatched then
+      Exit(False);
+
+    if (LMaxLen > 0) and (AInputIdx + LMaxLen - 1 > Length(AInput)) then
+      Exit(False);
+
+    Result := MatchRecursiveCS(AInput, APattern, AInputIdx + LMaxLen, LAfterClass);
+  end;
+end;
+
 class function TWildCard.MatchRecursiveCS(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean;
 var
   LClassEnd: Integer;
@@ -313,34 +490,16 @@ begin
           Inc(AInputIdx);
           Inc(APatternIdx);
         end;
-      '|':
-        begin
-          while (APatternIdx <= Length(APattern)) and (APattern[APatternIdx] = '|') do
-            Inc(APatternIdx);
-
-          if (AInputIdx > Length(AInput)) or not IsEolChar(AInput[AInputIdx]) then
-            Exit(False);
-
-          AInputIdx := ConsumeOneEol(AInput, AInputIdx);
-
-          while True do
-          begin
-            if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
-              Exit(True);
-
-            if (AInputIdx > Length(AInput)) or not IsEolChar(AInput[AInputIdx]) then
-              Exit(False);
-
-            AInputIdx := ConsumeOneEol(AInput, AInputIdx);
-          end;
-        end;
       '[':
         begin
-          if AInputIdx > Length(AInput) then
-            Exit(False);
-
           LClassEnd := FindClassEnd(APattern, APatternIdx);
           if LClassEnd = 0 then
+            Exit(False);
+
+          if IsQuotedAltClass(APattern, APatternIdx) then
+            Exit(MatchQuotedAltClassCS(AInput, APattern, AInputIdx, APatternIdx, LClassEnd));
+
+          if AInputIdx > Length(AInput) then
             Exit(False);
 
           if not CharInClassCS(APattern, APatternIdx, LClassEnd, AInput[AInputIdx]) then
@@ -412,6 +571,129 @@ begin
     Result := not Result;
 end;
 
+class function TWildCard.AltMatchesAtCI(const AInput: string; const AInputIdx: Integer;
+  const APattern: string; const AAltStart, AAltLen: Integer): Boolean;
+var
+  LIdx: Integer;
+begin
+  // Pattern alt content is pre-upper-cased by the public Match dispatcher,
+  // so only the input side needs FastToUpper here.
+  if AAltLen = 0 then
+    Exit(True);
+
+  if AInputIdx + AAltLen - 1 > Length(AInput) then
+    Exit(False);
+
+  for LIdx := 0 to AAltLen - 1 do
+    if FastToUpper(AInput[AInputIdx + LIdx]) <> APattern[AAltStart + LIdx] then
+      Exit(False);
+
+  Result := True;
+end;
+
+class function TWildCard.MatchQuotedAltClassCI(const AInput, APattern: string;
+  const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
+var
+  LIdx: Integer;
+  LNegated: Boolean;
+  LAfterClass: Integer;
+  LAltStart, LAltLen: Integer;
+  LAltContentEnd: Integer;
+  LAfterAlt: Integer;
+  LMaxLen: Integer;
+  LAnyMatched: Boolean;
+begin
+  // See the CS variant for the matching/validation rules - the only
+  // difference is the per-character upper-casing on the input side.
+  LIdx := AClassStart + 1;
+  LNegated := APattern[LIdx] = '!';
+
+  if LNegated then
+    Inc(LIdx);
+
+  LAfterClass := AClassEnd + 1;
+
+  if not LNegated then
+  begin
+    while LIdx < AClassEnd do
+    begin
+      if APattern[LIdx] <> '"' then
+        Exit(False);
+
+      LAltStart := LIdx + 1;
+      LAltContentEnd := LAltStart;
+
+      while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
+        Inc(LAltContentEnd);
+
+      if LAltContentEnd >= AClassEnd then
+        Exit(False);
+
+      LAltLen := LAltContentEnd - LAltStart;
+      LAfterAlt := LAltContentEnd + 1;
+
+      if (LAfterAlt < AClassEnd) and (APattern[LAfterAlt] <> '|') then
+        Exit(False);
+
+      if AltMatchesAtCI(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
+        if MatchRecursiveCI(AInput, APattern, AInputIdx + LAltLen, LAfterClass) then
+          Exit(True);
+
+      if LAfterAlt < AClassEnd then
+        LIdx := LAfterAlt + 1
+      else
+        LIdx := LAfterAlt;
+    end;
+
+    Result := False;
+  end
+  else
+  begin
+    LMaxLen := 0;
+    LAnyMatched := False;
+
+    while LIdx < AClassEnd do
+    begin
+      if APattern[LIdx] <> '"' then
+        Exit(False);
+
+      LAltStart := LIdx + 1;
+      LAltContentEnd := LAltStart;
+
+      while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
+        Inc(LAltContentEnd);
+
+      if LAltContentEnd >= AClassEnd then
+        Exit(False);
+
+      LAltLen := LAltContentEnd - LAltStart;
+      LAfterAlt := LAltContentEnd + 1;
+
+      if (LAfterAlt < AClassEnd) and (APattern[LAfterAlt] <> '|') then
+        Exit(False);
+
+      if LAltLen > LMaxLen then
+        LMaxLen := LAltLen;
+
+      if (not LAnyMatched) and AltMatchesAtCI(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
+        LAnyMatched := True;
+
+      if LAfterAlt < AClassEnd then
+        LIdx := LAfterAlt + 1
+      else
+        LIdx := LAfterAlt;
+    end;
+
+    if LAnyMatched then
+      Exit(False);
+
+    if (LMaxLen > 0) and (AInputIdx + LMaxLen - 1 > Length(AInput)) then
+      Exit(False);
+
+    Result := MatchRecursiveCI(AInput, APattern, AInputIdx + LMaxLen, LAfterClass);
+  end;
+end;
+
 class function TWildCard.MatchRecursiveCI(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean;
 var
   LClassEnd: Integer;
@@ -456,34 +738,16 @@ begin
           Inc(AInputIdx);
           Inc(APatternIdx);
         end;
-      '|':
-        begin
-          while (APatternIdx <= Length(APattern)) and (APattern[APatternIdx] = '|') do
-            Inc(APatternIdx);
-
-          if (AInputIdx > Length(AInput)) or not IsEolChar(AInput[AInputIdx]) then
-            Exit(False);
-
-          AInputIdx := ConsumeOneEol(AInput, AInputIdx);
-
-          while True do
-          begin
-            if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
-              Exit(True);
-
-            if (AInputIdx > Length(AInput)) or not IsEolChar(AInput[AInputIdx]) then
-              Exit(False);
-
-            AInputIdx := ConsumeOneEol(AInput, AInputIdx);
-          end;
-        end;
       '[':
         begin
-          if AInputIdx > Length(AInput) then
-            Exit(False);
-
           LClassEnd := FindClassEnd(APattern, APatternIdx);
           if LClassEnd = 0 then
+            Exit(False);
+
+          if IsQuotedAltClass(APattern, APatternIdx) then
+            Exit(MatchQuotedAltClassCI(AInput, APattern, AInputIdx, APatternIdx, LClassEnd));
+
+          if AInputIdx > Length(AInput) then
             Exit(False);
 
           if not CharInClassCI(APattern, APatternIdx, LClassEnd, AInput[AInputIdx]) then

@@ -1,32 +1,57 @@
 # Delphi.WildCardMatcher
 
 Simple Windows / DOS style wildcard matcher for Delphi, with a couple of
-useful extensions (`#` for digits, `|` for line breaks).
+useful extensions (`#` for digits, quoted-string alternation inside `[...]`).
 
 Pure Pascal, single unit, no dependencies beyond the RTL.
 
 ## Wildcard syntax
 
-| Token    | Matches                                                  | Example pattern | Matches            | Does not match    |
-| -------- | -------------------------------------------------------- | --------------- | ------------------ | ----------------- |
-| `*`      | Zero or more characters (including newlines)             | `wh*`           | `what`, `why`      | `awhile`, `watch` |
-| `?`      | Exactly one character                                    | `b?ll`          | `ball`, `bell`     | `bll`, `baal`     |
-| `#`      | Exactly one decimal digit (0-9)                          | `1#3`           | `103`, `113`       | `1a3`, `13`       |
-| `[abc]`  | Any one character in the set                             | `b[ae]ll`       | `ball`, `bell`     | `bill`            |
-| `[!abc]` | Any one character NOT in the set                         | `b[!ae]ll`      | `bill`, `bull`     | `ball`, `bell`    |
-| `[a-z]`  | Any one character in the range (low..high, ascending)    | `b[a-c]d`       | `bad`, `bbd`       | `bdd`, `b0d`      |
-| `\|`     | One or more line endings (CRLF / LF / CR, mix-tolerant)  | `file\|name`    | `file<CRLF>name`   | `filename`        |
+| Token              | Matches                                                  | Example pattern             | Matches                  | Does not match    |
+| ------------------ | -------------------------------------------------------- | --------------------------- | ------------------------ | ----------------- |
+| `*`                | Zero or more characters                                  | `wh*`                       | `what`, `why`            | `awhile`, `watch` |
+| `?`                | Exactly one character                                    | `b?ll`                      | `ball`, `bell`           | `bll`, `baal`     |
+| `#`                | Exactly one decimal digit (0-9)                          | `1#3`                       | `103`, `113`             | `1a3`, `13`       |
+| `[abc]`            | Any one character in the set                             | `b[ae]ll`                   | `ball`, `bell`           | `bill`            |
+| `[!abc]`           | Any one character NOT in the set                         | `b[!ae]ll`                  | `bill`, `bull`           | `ball`, `bell`    |
+| `[a-z]`            | Any one character in the range (low..high, ascending)    | `b[a-c]d`                   | `bad`, `bbd`             | `bdd`, `b0d`      |
+| `["foo"\|"bar"]`   | Any ONE of the listed literal strings at this position   | `*["3rdparty"\|"ThirdParty"]*.md` | `docs/3rdparty/x.md`, `src/ThirdPartyReadme.md` | `docs/internal/x.md` |
+| `[!"foo"\|"bar"]`  | A slice of length `max(altLen)` that is NEITHER prefix   | `[!"foo"\|"bar"]*`          | `quxyz`                  | `fooxyz`, `barxyz`|
 
 Sets may combine literals and ranges, e.g. `[a-zA-Z0-9_]`.
-A literal `]` inside a set must be the first content character:
+A literal `]` inside a single-char class must be the first content character:
 `[]abc]` matches `]`, `a`, `b` or `c`.
 A `-` that is the first or last content character is treated as a literal,
 e.g. `[-x]` matches `-` or `x`; `[a-]` matches `a` or `-`.
 
-`*` is line-agnostic; `|` REQUIRES at least one newline.
-A CRLF pair is one line ending, lone CR and lone LF each count as one, so
-mixed-EOL inputs are handled without surprises.
-`**` collapses to `*` and `||` collapses to `|`.
+`**` collapses to `*`.
+
+### Two flavours of `[...]`
+
+`[...]` is **auto-detected**:
+
+- If the first content character (after an optional `!`) is `"`, the class
+  is parsed as **quoted-string alternation**: `["foo"|"bar"|"baz"]`. The
+  `|` separates alternatives. The class matches the FIRST alternative that
+  succeeds at the current position and consumes its length.
+- Otherwise the class follows the **legacy single-character** rules
+  (`[abc]`, `[a-z]`, `[!xyz]`) and consumes exactly one character.
+
+An empty alternative `""` is allowed and matches zero characters
+(`[""|"foo"]` will match either nothing or `foo`).
+
+Quoted alternation is intended for file-mask use. Backslash escapes are
+NOT supported - none are needed because Windows file names cannot contain
+the characters `[`, `]`, `|` or `"` to begin with, so the syntax stays
+safe to embed in literal masks.
+
+Negated alternation `[!"foo"|"bar"]` succeeds when NONE of the listed
+alternatives is a prefix at the current position; it then consumes the
+length of the LONGEST alternative. When the input has fewer characters
+left than the longest alternative, the match fails.
+
+`|` OUTSIDE of `[...]` has no special meaning and is treated as a literal
+character.
 
 Matching is **case-insensitive by default** (Windows convention).
 Pass `ACaseSensitive = True` for ordinal comparison.
@@ -103,18 +128,32 @@ LMask.Match(LFile, '*.dproj');           // only the ad-hoc pattern
 LMask.Match(LFile, '*.dproj', True);     // ad-hoc + registered set
 ```
 
-### Structural matching with `|`
+### Quoted-string alternation in practice
 
-Because `|` requires a real line break, you can sketch the shape of a
-multi-line text without caring about what is on each line:
+Quoted alternation collapses several "same shape, different word" patterns
+into a single mask. Instead of:
 
 ```pascal
-TWildCard.Create.Match(LSourceCode, 'unit *;|interface|*|implementation|*|end.');
+LMask := TWildCard.Create(['*3rdparty*.md', '*ThirdParty*.md']);
 ```
 
-This matches any Pascal unit whose top-level structure has `interface`
-and `implementation` sections on their own lines, regardless of CRLF / LF
-mixing or how many blank lines separate the sections.
+you can write:
+
+```pascal
+LMask := TWildCard.Create('*["3rdparty"|"ThirdParty"]*.md');
+```
+
+The negated form is handy for "skip files whose name contains any of
+these tokens":
+
+```pascal
+if TWildCard.Create.Match(LFile, '*[!"backup"|"draft"|"old"]*.docx') then
+  ProcessOfficialDocument(LFile);
+```
+
+(Bear in mind negated alternation consumes a fixed-length slice equal to
+the longest alternative - it is not a true word-boundary check, just a
+positional negation.)
 
 ## API
 

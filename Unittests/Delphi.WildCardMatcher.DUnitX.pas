@@ -74,29 +74,37 @@ type
     [Test]
     procedure DashAsLiteralAtStartOrEndOfClassTest;
 
-    { '|' extension: one-or-more line endings }
+    { Quoted-string alternation: '["foo"|"bar"]' }
     [Test]
-    procedure PipeMatchesSingleCrlfTest;
+    procedure QuotedAltSingleAlternativeMatchesLiteralTest;
     [Test]
-    procedure PipeMatchesSingleLfTest;
+    procedure QuotedAltMultipleAlternativesAnyMatchesTest;
     [Test]
-    procedure PipeMatchesSingleCrTest;
+    procedure QuotedAltNoneOfTheAlternativesMatchesFailsTest;
     [Test]
-    procedure PipeMatchesMultipleEolsTest;
+    procedure QuotedAltCaseInsensitiveByDefaultTest;
     [Test]
-    procedure PipeMatchesMixedEolsTest;
+    procedure QuotedAltCaseSensitiveFlagTest;
     [Test]
-    procedure PipeRequiresAtLeastOneEolTest;
+    procedure QuotedAltCombinedWithAsteriskTest;
     [Test]
-    procedure PipeDoesNotMatchEndOfInputTest;
+    procedure QuotedAltReadmeExamplePatternTest;
     [Test]
-    procedure ConsecutivePipesCollapseTest;
+    procedure QuotedAltAlternativesWithDifferentLengthsBacktrackTest;
     [Test]
-    procedure PipeAtStartAndEndOfPatternTest;
+    procedure QuotedAltEmptyStringAlternativeMatchesZeroCharsTest;
     [Test]
-    procedure PipeCombinedWithAsteriskTest;
+    procedure QuotedAltNegatedSameLengthAlternativesTest;
     [Test]
-    procedure PipeStructuralMatchTest;
+    procedure QuotedAltNegatedConsumesLongestAlternativeLengthTest;
+    [Test]
+    procedure QuotedAltNegatedRequiresEnoughInputTest;
+    [Test]
+    procedure QuotedAltMalformedReturnsFalseTest;
+    [Test]
+    procedure QuotedAltCloseBracketInsideQuotedAlternativeIsLiteralTest;
+    [Test]
+    procedure PipeOutsideClassIsLiteralTest;
 
     { Combinations }
     [Test]
@@ -433,113 +441,147 @@ begin
     '*a*b*c*d*e*f*g*h*i*j*k*l*m*n*o*z*'));
 end;
 
-{ '|' extension: one-or-more line endings }
+{ Quoted-string alternation: '["foo"|"bar"]' }
 
-procedure TWildCardMatcherDUnitX.PipeMatchesSingleCrlfTest;
+procedure TWildCardMatcherDUnitX.QuotedAltSingleAlternativeMatchesLiteralTest;
 begin
-  Assert.IsTrue(TWildCard.Create.Match('file' + #13#10 + 'name', 'file|name'));
+  // A class with a single quoted alternative matches just that literal at
+  // the current position, consuming its length.
+  Assert.IsTrue (TWildCard.Create.Match('foo',    '["foo"]'));
+  Assert.IsTrue (TWildCard.Create.Match('foobar', '["foo"]*'));
+  Assert.IsFalse(TWildCard.Create.Match('fo',     '["foo"]'), 'not enough input to span the alt');
+  Assert.IsFalse(TWildCard.Create.Match('bar',    '["foo"]'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeMatchesSingleLfTest;
+procedure TWildCardMatcherDUnitX.QuotedAltMultipleAlternativesAnyMatchesTest;
 begin
-  Assert.IsTrue(TWildCard.Create.Match('file' + #10 + 'name', 'file|name'));
+  // The class succeeds when ANY of the listed alternatives matches at the
+  // current position.
+  Assert.IsTrue (TWildCard.Create.Match('foo', '["foo"|"bar"|"baz"]'));
+  Assert.IsTrue (TWildCard.Create.Match('bar', '["foo"|"bar"|"baz"]'));
+  Assert.IsTrue (TWildCard.Create.Match('baz', '["foo"|"bar"|"baz"]'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeMatchesSingleCrTest;
+procedure TWildCardMatcherDUnitX.QuotedAltNoneOfTheAlternativesMatchesFailsTest;
 begin
-  Assert.IsTrue(TWildCard.Create.Match('file' + #13 + 'name', 'file|name'));
+  Assert.IsFalse(TWildCard.Create.Match('qux', '["foo"|"bar"|"baz"]'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeMatchesMultipleEolsTest;
+procedure TWildCardMatcherDUnitX.QuotedAltCaseInsensitiveByDefaultTest;
 begin
-  // '|' is greedy on EOLs - a blank line / paragraph break must still match
-  Assert.IsTrue(TWildCard.Create.Match('file' + #13#10 + #13#10 + 'name', 'file|name'));
-  Assert.IsTrue(TWildCard.Create.Match('file' + #10 + #10 + #10 + 'name', 'file|name'));
+  Assert.IsTrue(TWildCard.Create.Match('FOO', '["foo"|"bar"]'));
+  Assert.IsTrue(TWildCard.Create.Match('Bar', '["foo"|"bar"]'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeMatchesMixedEolsTest;
+procedure TWildCardMatcherDUnitX.QuotedAltCaseSensitiveFlagTest;
 begin
-  // Mixed CRLF + LF + CR run between the two words still counts as "one or
-  // more line endings" and must match.
-  Assert.IsTrue(TWildCard.Create.Match('file' + #13#10 + #10 + #13 + 'name', 'file|name'));
+  Assert.IsTrue (TWildCard.Create(True).Match('foo', '["foo"|"bar"]'));
+  Assert.IsFalse(TWildCard.Create(True).Match('FOO', '["foo"|"bar"]'));
+  Assert.IsFalse(TWildCard.Create(True).Match('Bar', '["foo"|"bar"]'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeRequiresAtLeastOneEolTest;
+procedure TWildCardMatcherDUnitX.QuotedAltCombinedWithAsteriskTest;
 begin
-  // 'filename' has no EOL between the two halves - '|' must NOT match zero
-  Assert.IsFalse(TWildCard.Create.Match('filename', 'file|name'));
-  // Tab or space is not an EOL
-  Assert.IsFalse(TWildCard.Create.Match('file' + #9 + 'name',  'file|name'));
-  Assert.IsFalse(TWildCard.Create.Match('file' + ' ' + 'name', 'file|name'));
+  // Embedded in a larger pattern: '*["foo"|"bar"]*' = the input must
+  // contain either 'foo' or 'bar' somewhere.
+  Assert.IsTrue (TWildCard.Create.Match('xxfooyy', '*["foo"|"bar"]*'));
+  Assert.IsTrue (TWildCard.Create.Match('xxbaryy', '*["foo"|"bar"]*'));
+  Assert.IsFalse(TWildCard.Create.Match('xxxxxxx',  '*["foo"|"bar"]*'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeDoesNotMatchEndOfInputTest;
+procedure TWildCardMatcherDUnitX.QuotedAltReadmeExamplePatternTest;
 begin
-  // End-of-input must NOT be treated as an implicit EOL by '|'
-  Assert.IsFalse(TWildCard.Create.Match('file', 'file|'));
-  Assert.IsFalse(TWildCard.Create.Match('',     '|'));
+  // README example: '*["3rdparty"|"ThirdParty"]*.md' matches Markdown files
+  // anywhere on the path that mention either name.
+  Assert.IsTrue (TWildCard.Create.Match('docs/3rdparty/notes.md',    '*["3rdparty"|"ThirdParty"]*.md'));
+  Assert.IsTrue (TWildCard.Create.Match('src/ThirdPartyReadme.md',   '*["3rdparty"|"ThirdParty"]*.md'));
+  Assert.IsTrue (TWildCard.Create.Match('3RDPARTY-overview.md',      '*["3rdparty"|"ThirdParty"]*.md'),
+    'CI default: case difference in the alt content still matches');
+  Assert.IsFalse(TWildCard.Create.Match('docs/internal/notes.md',    '*["3rdparty"|"ThirdParty"]*.md'));
+  Assert.IsFalse(TWildCard.Create.Match('docs/ThirdParty/notes.txt', '*["3rdparty"|"ThirdParty"]*.md'),
+    'extension mismatch');
 end;
 
-procedure TWildCardMatcherDUnitX.ConsecutivePipesCollapseTest;
+procedure TWildCardMatcherDUnitX.QuotedAltAlternativesWithDifferentLengthsBacktrackTest;
 begin
-  // '||' must behave like '|' - still "one or more" EOLs, not "exactly two"
-  Assert.IsTrue(TWildCard.Create.Match('a' + #10 + 'b',         'a||b'));
-  Assert.IsTrue(TWildCard.Create.Match('a' + #10 + #10 + 'b',   'a||b'));
-  Assert.IsTrue(TWildCard.Create.Match('a' + #13#10 + 'b',      'a|||b'));
+  // 'a' and 'ab' are both candidates at position 1.  With trailing 'b' in
+  // the pattern, the engine must try the longer alt first or backtrack so
+  // that input 'ab' followed by 'b' = 'abb' succeeds.
+  Assert.IsTrue(TWildCard.Create.Match('abb', '["a"|"ab"]b'),
+    'engine must explore both alternatives to find the one that lets the tail match');
+  // Input 'ab' - first alt 'a' matches and leaves 'b' for the trailing 'b'.
+  Assert.IsTrue(TWildCard.Create.Match('ab',  '["a"|"ab"]b'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeAtStartAndEndOfPatternTest;
+procedure TWildCardMatcherDUnitX.QuotedAltEmptyStringAlternativeMatchesZeroCharsTest;
 begin
-  // '|name' - input must start with EOL(s) then 'name'
-  Assert.IsTrue (TWildCard.Create.Match(#10 + 'name',         '|name'));
-  Assert.IsTrue (TWildCard.Create.Match(#13#10 + #10 + 'name', '|name'));
-  Assert.IsFalse(TWildCard.Create.Match('name',                '|name'));
-
-  // 'file|' - input must end with EOL(s) (any amount)
-  Assert.IsTrue (TWildCard.Create.Match('file' + #10,        'file|'));
-  Assert.IsTrue (TWildCard.Create.Match('file' + #13#10#13#10, 'file|'));
-  Assert.IsFalse(TWildCard.Create.Match('file',              'file|'));
+  // An empty alternative '""' matches zero characters - always succeeds at
+  // the current position, consumes nothing.
+  Assert.IsTrue (TWildCard.Create.Match('foo',    '[""]foo'));
+  Assert.IsTrue (TWildCard.Create.Match('foobar', '[""|"foo"]bar'),
+    'empty alt matches first, leaves the whole input for the tail');
+  // Single empty alt at end - matches when nothing else is left.
+  Assert.IsTrue (TWildCard.Create.Match('foo', 'foo[""]'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeCombinedWithAsteriskTest;
+procedure TWildCardMatcherDUnitX.QuotedAltNegatedSameLengthAlternativesTest;
 begin
-  // '*|*' = anything, then a real line break, then anything.
-  Assert.IsTrue (TWildCard.Create.Match('foo' + #13#10 + 'bar', '*|*'));
-  Assert.IsTrue (TWildCard.Create.Match('a b c' + #10 + 'x y z', '*|*'));
-  Assert.IsFalse(TWildCard.Create.Match('all on one line',      '*|*'), 'no EOL anywhere');
-
-  // '|*foo' = starts with EOL(s) then anything then 'foo'
-  Assert.IsTrue (TWildCard.Create.Match(#10 + 'xxxfoo', '|*foo'));
-  Assert.IsFalse(TWildCard.Create.Match('xxxfoo',      '|*foo'), 'missing leading EOL');
+  // Negation: NONE of the alts may be a prefix at the current position;
+  // consume max(altLen) chars on success.  All alts here are length 3.
+  Assert.IsTrue (TWildCard.Create.Match('quxsuffix', '[!"foo"|"bar"]*'));
+  Assert.IsFalse(TWildCard.Create.Match('foosuffix', '[!"foo"|"bar"]*'));
+  Assert.IsFalse(TWildCard.Create.Match('barsuffix', '[!"foo"|"bar"]*'));
 end;
 
-procedure TWildCardMatcherDUnitX.PipeStructuralMatchTest;
-const
-  CR_LF = #13#10;
-var
-  LSource: string;
+procedure TWildCardMatcherDUnitX.QuotedAltNegatedConsumesLongestAlternativeLengthTest;
 begin
-  // Realistic use case: matching the structural shape of a Delphi unit
-  // across line boundaries using '|' as the line-break anchor.
-  LSource :=
-    'unit Foo;'                  + CR_LF +
-    CR_LF +
-    'interface'                  + CR_LF +
-    CR_LF +
-    'procedure Bar;'             + CR_LF +
-    CR_LF +
-    'implementation'             + CR_LF +
-    CR_LF +
-    'procedure Bar;'             + CR_LF +
-    'begin'                      + CR_LF +
-    'end;'                       + CR_LF +
-    CR_LF +
-    'end.';
+  // Alternatives have different lengths (3 and 6).  Longest = 6 so the
+  // class consumes 6 chars on success.
+  Assert.IsTrue (TWildCard.Create.Match('abcdef-tail', '[!"foo"|"barbaz"]-tail'),
+    'six chars consumed, then "-tail" matches the rest');
+  Assert.IsFalse(TWildCard.Create.Match('foo-something', '[!"foo"|"barbaz"]-tail'),
+    'first three chars match the short alt as a prefix -> negation fails');
+  Assert.IsFalse(TWildCard.Create.Match('barbaz-tail', '[!"foo"|"barbaz"]-tail'),
+    'first six chars match the long alt as a prefix -> negation fails');
+end;
 
-  Assert.IsTrue(TWildCard.Create.Match(LSource,
-    'unit *;|interface|*|implementation|*|end.'));
-  Assert.IsFalse(TWildCard.Create.Match(LSource,
-    'unit *;|interface|*|missingsection|*|end.'));
+procedure TWildCardMatcherDUnitX.QuotedAltNegatedRequiresEnoughInputTest;
+begin
+  // Input must have at least max(altLen) chars remaining; otherwise the
+  // class cannot consume its slice and the match fails.
+  Assert.IsFalse(TWildCard.Create.Match('ab', '[!"foo"|"bar"]'),
+    'only 2 chars left but the class needs to consume 3');
+  Assert.IsFalse(TWildCard.Create.Match('',   '[!"foo"]'),
+    'no input left, cannot consume the slice');
+end;
+
+procedure TWildCardMatcherDUnitX.QuotedAltMalformedReturnsFalseTest;
+begin
+  // Unterminated quote - the class never closes, FindClassEnd returns 0,
+  // engine returns False.
+  Assert.IsFalse(TWildCard.Create.Match('foo', '["foo'));
+  Assert.IsFalse(TWildCard.Create.Match('foo', '["foo"|"bar'));
+  // Missing '|' between alternatives.
+  Assert.IsFalse(TWildCard.Create.Match('foo', '["foo""bar"]'));
+  // Garbage between alternatives.
+  Assert.IsFalse(TWildCard.Create.Match('foo', '["foo"x"bar"]'));
+end;
+
+procedure TWildCardMatcherDUnitX.QuotedAltCloseBracketInsideQuotedAlternativeIsLiteralTest;
+begin
+  // A ']' inside '"..."' is part of the alternative literal, not the
+  // class terminator.  This is the whole point of being quote-aware.
+  Assert.IsTrue (TWildCard.Create.Match('a]b', '["a]b"]'));
+  Assert.IsTrue (TWildCard.Create.Match('[x]', '["[x]"]'));
+end;
+
+procedure TWildCardMatcherDUnitX.PipeOutsideClassIsLiteralTest;
+begin
+  // '|' has no special meaning outside '[...]' anymore - it is just a
+  // literal character.
+  Assert.IsTrue (TWildCard.Create.Match('a|b',  'a|b'));
+  Assert.IsTrue (TWildCard.Create.Match('a|b',  'a?b'),  '? matches the literal |');
+  Assert.IsFalse(TWildCard.Create.Match('ab',   'a|b'),  'no | in input -> no match');
 end;
 
 { Multi-pattern overloads }
