@@ -180,6 +180,22 @@ type
     procedure InstanceCaseSensitivityIsLockedAtCreateTest;
     [Test]
     procedure InstanceMatchWorksOnDefaultInitialisedRecordTest;
+
+    { Registered patterns run the COMPILED engine - edge-case coverage.
+      Ad-hoc Match(input, pattern) runs the interpreting engine; these
+      tests pin the compiled path to the same semantics. }
+    [Test]
+    procedure CompiledCharClassEdgeCasesTest;
+    [Test]
+    procedure CompiledQuotedAltTest;
+    [Test]
+    procedure CompiledStarFastPathsTest;
+    [Test]
+    procedure CompiledDigitAndQuestionTest;
+    [Test]
+    procedure CompiledCaseSensitiveTest;
+    [Test]
+    procedure CompiledEmptyAndMalformedPatternTest;
   end;
 
 implementation
@@ -1038,6 +1054,118 @@ begin
 
   Assert.IsFalse(LMask.Match('anything'),           'empty set');
   Assert.IsTrue (LMask.Match('Unit1.pas', '*.pas'), 'ad-hoc still works');
+end;
+
+{ Registered patterns run the COMPILED engine - edge-case coverage }
+
+procedure TWildCardMatcherDUnitX.CompiledCharClassEdgeCasesTest;
+begin
+  // Literal ']' as first content char
+  Assert.IsTrue (TWildCard.Create('[]abc]').Match(']'));
+  Assert.IsTrue (TWildCard.Create('[]abc]').Match('a'));
+  Assert.IsFalse(TWildCard.Create('[]abc]').Match('x'));
+
+  // Literal '-' at start / end of class
+  Assert.IsTrue (TWildCard.Create('[-x]').Match('-'));
+  Assert.IsTrue (TWildCard.Create('[a-]').Match('-'));
+  Assert.IsFalse(TWildCard.Create('[a-]').Match('b'));
+
+  // Ranges + negation
+  Assert.IsTrue (TWildCard.Create('b[a-c]d').Match('bbd'));
+  Assert.IsFalse(TWildCard.Create('b[a-c]d').Match('bdd'));
+  Assert.IsTrue (TWildCard.Create('b[!ae]ll').Match('bull'));
+  Assert.IsFalse(TWildCard.Create('b[!ae]ll').Match('ball'));
+  Assert.IsTrue (TWildCard.Create('[a-cq0-9]').Match('7'));
+  Assert.IsFalse(TWildCard.Create('[a-cq0-9]').Match('z'));
+end;
+
+procedure TWildCardMatcherDUnitX.CompiledQuotedAltTest;
+begin
+  Assert.IsTrue (TWildCard.Create('["foo"|"bar"]').Match('bar'));
+  Assert.IsFalse(TWildCard.Create('["foo"|"bar"]').Match('qux'));
+  Assert.IsTrue (TWildCard.Create('*["3rdparty"|"ThirdParty"]*.md').Match('docs\3rdparty\notes.md'));
+  Assert.IsFalse(TWildCard.Create('*["3rdparty"|"ThirdParty"]*.md').Match('docs\internal\notes.md'));
+
+  // Different-length alternatives require backtracking across alts
+  Assert.IsTrue (TWildCard.Create('["a"|"ab"]b').Match('abb'));
+  Assert.IsTrue (TWildCard.Create('["a"|"ab"]b').Match('ab'));
+
+  // Empty alternative matches zero chars
+  Assert.IsTrue (TWildCard.Create('[""|"foo"]bar').Match('foobar'));
+  Assert.IsTrue (TWildCard.Create('foo[""]').Match('foo'));
+
+  // Negation consumes the longest alternative's length
+  Assert.IsTrue (TWildCard.Create('[!"foo"|"bar"]*').Match('quxsuffix'));
+  Assert.IsFalse(TWildCard.Create('[!"foo"|"bar"]*').Match('foosuffix'));
+  Assert.IsTrue (TWildCard.Create('[!"foo"|"barbaz"]-tail').Match('abcdef-tail'));
+  Assert.IsFalse(TWildCard.Create('[!"foo"|"barbaz"]-tail').Match('barbaz-tail'));
+
+  // ']' inside a quoted alternative is a literal
+  Assert.IsTrue (TWildCard.Create('["a]b"]').Match('a]b'));
+  Assert.IsTrue (TWildCard.Create('["[x]"]').Match('[x]'));
+end;
+
+procedure TWildCardMatcherDUnitX.CompiledStarFastPathsTest;
+begin
+  // Tail anchor ('*literal' at pattern end)
+  Assert.IsTrue (TWildCard.Create('*.pas').Match('Unit1.pas'));
+  Assert.IsFalse(TWildCard.Create('*.pas').Match('Unit1.pa'));
+  Assert.IsTrue (TWildCard.Create('*.pas').Match('.pas'));
+  Assert.IsFalse(TWildCard.Create('*.pas').Match('pas'), 'input shorter than the literal tail');
+
+  // Multiple stars with first-char skips
+  Assert.IsTrue (TWildCard.Create('*a*b*c*').Match('xaxbxcx'));
+  Assert.IsFalse(TWildCard.Create('*a*b*c*').Match('xcxbxa'), 'letters out of order');
+
+  // Prefix literal then trailing star
+  Assert.IsTrue (TWildCard.Create('wh*').Match('what'));
+  Assert.IsFalse(TWildCard.Create('wh*').Match('awhile'));
+
+  // Star followed by '#' (digit skip) and by a class
+  Assert.IsTrue (TWildCard.Create('*Repository*_v#_*.xyz').Match('OrderRepository_v3_final.xyz'));
+  Assert.IsFalse(TWildCard.Create('*Repository*_v#_*.xyz').Match('OrderRepository_vX_final.xyz'));
+  Assert.IsTrue (TWildCard.Create('*[abc]end').Match('xxxaend'));
+  Assert.IsFalse(TWildCard.Create('*[abc]end').Match('xxxdend'));
+end;
+
+procedure TWildCardMatcherDUnitX.CompiledDigitAndQuestionTest;
+begin
+  Assert.IsTrue (TWildCard.Create('Test_###.log').Match('Test_001.log'));
+  Assert.IsFalse(TWildCard.Create('Test_###.log').Match('Test_00A.log'));
+  Assert.IsTrue (TWildCard.Create('b?ll').Match('ball'));
+  Assert.IsFalse(TWildCard.Create('b?ll').Match('bll'));
+  Assert.IsTrue (TWildCard.Create('*_v#_*').Match('x_v3_y'));
+  Assert.IsFalse(TWildCard.Create('*_v#_*').Match('x_vA_y'));
+end;
+
+procedure TWildCardMatcherDUnitX.CompiledCaseSensitiveTest;
+begin
+  // CS instance: ordinal compiled engine
+  Assert.IsTrue (TWildCard.Create('*.pas', True).Match('unit1.pas'));
+  Assert.IsFalse(TWildCard.Create('*.pas', True).Match('UNIT1.PAS'));
+  Assert.IsTrue (TWildCard.Create('["foo"|"bar"]', True).Match('bar'));
+  Assert.IsFalse(TWildCard.Create('["foo"|"bar"]', True).Match('BAR'));
+
+  // CI instance: per-char engine, pattern case irrelevant
+  Assert.IsTrue (TWildCard.Create('*.PAS').Match('unit1.pas'));
+  Assert.IsTrue (TWildCard.Create('["FOO"|"BAR"]').Match('bar'));
+end;
+
+procedure TWildCardMatcherDUnitX.CompiledEmptyAndMalformedPatternTest;
+begin
+  // Empty registered pattern matches only the empty input
+  Assert.IsTrue (TWildCard.Create('').Match(''));
+  Assert.IsFalse(TWildCard.Create('').Match('x'));
+
+  // Malformed patterns never match (compiled as invalid)
+  Assert.IsFalse(TWildCard.Create('[abc').Match('a'));
+  Assert.IsFalse(TWildCard.Create('["foo').Match('foo'));
+  Assert.IsFalse(TWildCard.Create('["foo"|"bar').Match('foo'));
+  Assert.IsFalse(TWildCard.Create('["foo""bar"]').Match('foo'));
+  Assert.IsFalse(TWildCard.Create('["foo"x"bar"]').Match('foo'));
+
+  // A malformed pattern in a set must not break the others
+  Assert.IsTrue(TWildCard.Create(TArray<string>.Create('[bad', '*.pas')).Match('Unit1.pas'));
 end;
 
 initialization

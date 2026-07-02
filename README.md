@@ -80,7 +80,10 @@ if TWildCard.Create(True).Match('Unit1.PAS', '*.pas') then
 ### Pre-registered patterns (recommended for repeated matching)
 
 When you match many inputs against the same fixed pattern set, register
-the patterns at `Create` so the per-call upper-casing happens once. Then
+the patterns at `Create`. Registered patterns are **compiled once** into
+token programs (literal runs become block compares, classes and
+alternations are parsed once, `*` scans are length-pruned), which makes
+repeated matching several times faster than the ad-hoc form. Then
 `Match(input)` walks the registered set short-circuiting on the first hit.
 
 ```pascal
@@ -206,6 +209,15 @@ DUnitX-based test suite under `Unittests\`. Open
 msbuild Unittests\Delphi.WildCardMatcher.Tests.dproj /t:Build /p:Config=Debug /p:Platform=Win32
 Unittests\Win32\Debug\Delphi.WildCardMatcher.Tests.exe
 ```
+
+## Benchmarks
+
+A standalone performance harness lives under `Benchmarks\`. It first runs
+a parity suite (the compiled registered-pattern engine and the
+interpreting ad-hoc engine must agree on every edge case, CI and CS) and
+then times both engines over realistic scenarios. Build/run instructions
+are in the `.dpr` header; historical numbers in
+[Benchmarks/RESULTS.md](Benchmarks/RESULTS.md).
 
 ## License
 
