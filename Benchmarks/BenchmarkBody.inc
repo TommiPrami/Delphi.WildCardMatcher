@@ -1,4 +1,4 @@
-// Shared body of the WildCardMatcher benchmark - included by BOTH
+﻿// Shared body of the WildCardMatcher benchmark - included by BOTH
 // Delphi.WildCardMatcher.Benchmark.dpr (current Source\ unit) and
 // Baseline\Delphi.WildCardMatcher.BaselineBenchmark.dpr (frozen
 // pre-optimization unit from commit 0e83678).  Keeping the body in one

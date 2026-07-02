@@ -1,4 +1,4 @@
-unit Delphi.WildCardMatcher;
+﻿unit Delphi.WildCardMatcher;
 
 // Windows / DOS style wildcard matcher with a few common extensions.
 //

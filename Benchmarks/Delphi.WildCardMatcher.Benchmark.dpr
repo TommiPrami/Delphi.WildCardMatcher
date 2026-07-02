@@ -1,4 +1,4 @@
-program Delphi.WildCardMatcher.Benchmark;
+﻿program Delphi.WildCardMatcher.Benchmark;
 
 // Permanent performance harness for Delphi.WildCardMatcher.
 //

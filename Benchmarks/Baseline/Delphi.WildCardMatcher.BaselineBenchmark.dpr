@@ -1,4 +1,4 @@
-program Delphi.WildCardMatcher.BaselineBenchmark;
+﻿program Delphi.WildCardMatcher.BaselineBenchmark;
 
 // BASELINE benchmark: runs the exact same scenarios as the main benchmark
 // (shared BenchmarkBody.inc) against the FROZEN pre-optimization matcher
