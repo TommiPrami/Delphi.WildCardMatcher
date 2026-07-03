@@ -126,6 +126,11 @@ type
     class function PatternTailIsLiteral(const APattern: string; const APatternIdx: Integer): Boolean; static;
     // Compiled engine (registered patterns).  The pattern text handed to
     // CompilePattern must already be prepared (upper-cased for CI).
+    class procedure AddToken(const AToken: TToken; var ATokens: TArray<TToken>; var ACount: Integer); static;
+    class procedure FlushLiteralToken(const APattern: string; const AEndExclusive, ALitStart: Integer;
+      var ATokens: TArray<TToken>; var ACount: Integer); static;
+    class function ParseClassToken(const APattern: string; var AClassIdx: Integer; var AToken: TToken;
+      const ALen: Integer): Boolean; static;
     class function CompilePattern(const APattern: string): TCompiledPattern; static;
     class function CharInCompiledClass(const AToken: TToken; const AChar: Char): Boolean; static;
     class function LiteralMatchesAtCI(const AInput: string; const AInputIdx: Integer; const ALit: string): Boolean; static;
@@ -1028,153 +1033,154 @@ end;
 
 { TWildCard - compiled engine (registered patterns) }
 
-class function TWildCard.CompilePattern(const APattern: string): TCompiledPattern;
+class procedure TWildCard.AddToken(const AToken: TToken; var ATokens: TArray<TToken>; var ACount: Integer);
+begin
+  if ACount = Length(ATokens) then
+    SetLength(ATokens, (ACount * 2) + 8);
 
-  procedure Add(const AToken: TToken; var ATokens: TArray<TToken>; var ACount: Integer);
+  ATokens[ACount] := AToken;
+  Inc(ACount);
+end;
+
+class procedure TWildCard.FlushLiteralToken(const APattern: string; const AEndExclusive, ALitStart: Integer;
+  var ATokens: TArray<TToken>; var ACount: Integer);
+var
+  LLitTok: TToken;
+begin
+  if ALitStart < AEndExclusive then
   begin
-    if ACount = Length(ATokens) then
-      SetLength(ATokens, (ACount * 2) + 8);
+    LLitTok := Default(TToken);
 
-    ATokens[ACount] := AToken;
-    Inc(ACount);
+    LLitTok.Kind := tkLiteral;
+    LLitTok.Lit := Copy(APattern, ALitStart, AEndExclusive - ALitStart);
+    AddToken(LLitTok, ATokens, ACount);
+  end;
+end;
+
+// AClassIdx is at '[' on entry; on success it is moved past the closing
+// ']'.  Mirrors the interpreting engine's FindClassEnd + CharInClass* +
+// MatchQuotedAltClass* parsing rules exactly - the two engines MUST stay
+// in agreement (the benchmark app has a parity suite that checks this).
+class function TWildCard.ParseClassToken(const APattern: string; var AClassIdx: Integer; var AToken: TToken;
+  const ALen: Integer): Boolean;
+var
+  LPos, LContentStart, LContentEnd, LQStart: Integer;
+  LAltCount: Integer;
+  LAlt: string;
+begin
+  AToken := Default(TToken);
+
+  LPos := AClassIdx + 1;
+
+  if (LPos <= ALen) and (APattern[LPos] = '!') then
+  begin
+    AToken.Negate := True;
+    Inc(LPos);
   end;
 
-  procedure FlushLiteral(const AEndExclusive: Integer; const ALitStart: Integer; var ATokens: TArray<TToken>; var ACount: Integer);
-  var
-    LLitTok: TToken;
+  if (LPos <= ALen) and (APattern[LPos] = '"') then
   begin
-    if ALitStart < AEndExclusive then
+    // Quoted alternation form.
+    AToken.Kind := tkAltGroup;
+    AToken.MaxAltLen := 0;
+    AToken.MinAltLen := MaxInt;
+    LAltCount := 0;
+
+    while True do
     begin
-      LLitTok := Default(TToken);
-
-      LLitTok.Kind := tkLiteral;
-      LLitTok.Lit := Copy(APattern, ALitStart, AEndExclusive - ALitStart);
-      Add(LLitTok, ATokens, ACount);
-    end;
-  end;
-
-  // AClassIdx is at '[' on entry; on success it is moved past the closing
-  // ']'.  Mirrors the interpreting engine's FindClassEnd + CharInClass* +
-  // MatchQuotedAltClass* parsing rules exactly - the two engines MUST stay
-  // in agreement (the benchmark app has a parity suite that checks this).
-  function ParseClass(var AClassIdx: Integer; var AToken: TToken; const ALen: Integer): Boolean;
-  var
-    LPos, LContentStart, LContentEnd, LQStart: Integer;
-    LAltCount: Integer;
-    LAlt: string;
-  begin
-    AToken := Default(TToken);
-
-    LPos := AClassIdx + 1;
-
-    if (LPos <= ALen) and (APattern[LPos] = '!') then
-    begin
-      AToken.Negate := True;
-      Inc(LPos);
-    end;
-
-    if (LPos <= ALen) and (APattern[LPos] = '"') then
-    begin
-      // Quoted alternation form.
-      AToken.Kind := tkAltGroup;
-      AToken.MaxAltLen := 0;
-      AToken.MinAltLen := MaxInt;
-      LAltCount := 0;
-
-      while True do
-      begin
-        if LPos > ALen then
-          Exit(False);
-
-        if APattern[LPos] = ']' then
-          Break;
-
-        if APattern[LPos] <> '"' then
-          Exit(False);
-
-        Inc(LPos);
-        LQStart := LPos;
-
-        while (LPos <= ALen) and (APattern[LPos] <> '"') do
-          Inc(LPos);
-
-        if LPos > ALen then
-          Exit(False);
-
-        LAlt := Copy(APattern, LQStart, LPos - LQStart);
-        Inc(LPos);
-
-        if LAltCount = Length(AToken.Alts) then
-          SetLength(AToken.Alts, (LAltCount * 2) + 4);
-
-        AToken.Alts[LAltCount] := LAlt;
-        Inc(LAltCount);
-
-        if Length(LAlt) > AToken.MaxAltLen then
-          AToken.MaxAltLen := Length(LAlt);
-        if Length(LAlt) < AToken.MinAltLen then
-          AToken.MinAltLen := Length(LAlt);
-
-        // After an alternative: '|' continues, ']' ends (checked at loop
-        // top), anything else - including a bare '"' - is malformed.
-        if LPos > ALen then
-          Exit(False);
-
-        if APattern[LPos] = '|' then
-          Inc(LPos)
-        else if APattern[LPos] <> ']' then
-          Exit(False);
-      end;
-
-      SetLength(AToken.Alts, LAltCount);
-
-      if LAltCount = 0 then
+      if LPos > ALen then
         Exit(False);
 
-      AClassIdx := LPos + 1;
-      Exit(True);
+      if APattern[LPos] = ']' then
+        Break;
+
+      if APattern[LPos] <> '"' then
+        Exit(False);
+
+      Inc(LPos);
+      LQStart := LPos;
+
+      while (LPos <= ALen) and (APattern[LPos] <> '"') do
+        Inc(LPos);
+
+      if LPos > ALen then
+        Exit(False);
+
+      LAlt := Copy(APattern, LQStart, LPos - LQStart);
+      Inc(LPos);
+
+      if LAltCount = Length(AToken.Alts) then
+        SetLength(AToken.Alts, (LAltCount * 2) + 4);
+
+      AToken.Alts[LAltCount] := LAlt;
+      Inc(LAltCount);
+
+      if Length(LAlt) > AToken.MaxAltLen then
+        AToken.MaxAltLen := Length(LAlt);
+      if Length(LAlt) < AToken.MinAltLen then
+        AToken.MinAltLen := Length(LAlt);
+
+      // After an alternative: '|' continues, ']' ends (checked at loop
+      // top), anything else - including a bare '"' - is malformed.
+      if LPos > ALen then
+        Exit(False);
+
+      if APattern[LPos] = '|' then
+        Inc(LPos)
+      else if APattern[LPos] <> ']' then
+        Exit(False);
     end;
 
-    // Legacy single-char class form.
-    AToken.Kind := tkCharClass;
-    LContentStart := LPos;
-    LContentEnd := LPos;
+    SetLength(AToken.Alts, LAltCount);
 
-    // First content char ']' is a literal member.
-    if (LContentEnd <= ALen) and (APattern[LContentEnd] = ']') then
-      Inc(LContentEnd);
-
-    while (LContentEnd <= ALen) and (APattern[LContentEnd] <> ']') do
-      Inc(LContentEnd);
-
-    if LContentEnd > ALen then
+    if LAltCount = 0 then
       Exit(False);
 
-    // Content spans [LContentStart .. LContentEnd - 1]; LContentEnd = ']'.
-    // 'X-Y' is a range when '-' is followed by a real content character
-    // (same rule as CharInClass*).
-    LPos := LContentStart;
-
-    while LPos < LContentEnd do
-    begin
-      if (LPos + 2 < LContentEnd) and (APattern[LPos + 1] = '-') then
-      begin
-        SetLength(AToken.Ranges, Length(AToken.Ranges) + 1);
-        AToken.Ranges[High(AToken.Ranges)].Lo := APattern[LPos];
-        AToken.Ranges[High(AToken.Ranges)].Hi := APattern[LPos + 2];
-        Inc(LPos, 3);
-      end
-      else
-      begin
-        AToken.Singles := AToken.Singles + APattern[LPos];
-        Inc(LPos);
-      end;
-    end;
-
-    AClassIdx := LContentEnd + 1;
-    Result := True;
+    AClassIdx := LPos + 1;
+    Exit(True);
   end;
 
+  // Legacy single-char class form.
+  AToken.Kind := tkCharClass;
+  LContentStart := LPos;
+  LContentEnd := LPos;
+
+  // First content char ']' is a literal member.
+  if (LContentEnd <= ALen) and (APattern[LContentEnd] = ']') then
+    Inc(LContentEnd);
+
+  while (LContentEnd <= ALen) and (APattern[LContentEnd] <> ']') do
+    Inc(LContentEnd);
+
+  if LContentEnd > ALen then
+    Exit(False);
+
+  // Content spans [LContentStart .. LContentEnd - 1]; LContentEnd = ']'.
+  // 'X-Y' is a range when '-' is followed by a real content character
+  // (same rule as CharInClass*).
+  LPos := LContentStart;
+
+  while LPos < LContentEnd do
+  begin
+    if (LPos + 2 < LContentEnd) and (APattern[LPos + 1] = '-') then
+    begin
+      SetLength(AToken.Ranges, Length(AToken.Ranges) + 1);
+      AToken.Ranges[High(AToken.Ranges)].Lo := APattern[LPos];
+      AToken.Ranges[High(AToken.Ranges)].Hi := APattern[LPos + 2];
+      Inc(LPos, 3);
+    end
+    else
+    begin
+      AToken.Singles := AToken.Singles + APattern[LPos];
+      Inc(LPos);
+    end;
+  end;
+
+  AClassIdx := LContentEnd + 1;
+  Result := True;
+end;
+
+class function TWildCard.CompilePattern(const APattern: string): TCompiledPattern;
 var
   LLen, LIdx, LLitStart: Integer;
   LTokens: TArray<TToken>;
@@ -1196,44 +1202,44 @@ begin
     case APattern[LIdx] of
       '*':
         begin
-          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
 
           while (LIdx <= LLen) and (APattern[LIdx] = '*') do
             Inc(LIdx);
 
           LTok := Default(TToken);
           LTok.Kind := tkStar;
-          Add(LTok, LTokens, LCount);
+          AddToken(LTok, LTokens, LCount);
 
           LLitStart := LIdx;
         end;
       '?':
         begin
-          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
 
           LTok := Default(TToken);
           LTok.Kind := tkAnyChar;
-          Add(LTok, LTokens, LCount);
+          AddToken(LTok, LTokens, LCount);
 
           Inc(LIdx);
           LLitStart := LIdx;
         end;
       '#':
         begin
-          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
 
           LTok := Default(TToken);
           LTok.Kind := tkDigit;
-          Add(LTok, LTokens, LCount);
+          AddToken(LTok, LTokens, LCount);
 
           Inc(LIdx);
           LLitStart := LIdx;
         end;
       '[':
         begin
-          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
 
-          if not ParseClass(LIdx, LTok, LLen) then
+          if not ParseClassToken(APattern, LIdx, LTok, LLen) then
           begin
             // Malformed class - the pattern can never match anything
             // (same behaviour as the interpreting engine).
@@ -1241,7 +1247,7 @@ begin
             Exit;
           end;
 
-          Add(LTok, LTokens, LCount);
+          AddToken(LTok, LTokens, LCount);
           LLitStart := LIdx;
         end;
     else
@@ -1249,7 +1255,7 @@ begin
     end;
   end;
 
-  FlushLiteral(LLen + 1, LLitStart, LTokens, LCount);
+  FlushLiteralToken(APattern, LLen + 1, LLitStart, LTokens, LCount);
   SetLength(LTokens, LCount);
 
   // Back-fill MinRemain: minimum input chars needed from token i to the
