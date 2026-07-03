@@ -151,7 +151,7 @@ type
     // Case-independent helpers
     class function IsAsciiDigit(const AChar: Char): Boolean; static; inline;
     class function FindClassEnd(const APattern: string; const AStart: Integer; var AIsQuotedAlt: Boolean): Integer; static;
-    class function PatternTailIsLiteral(const APattern: string; const APatternIndex: Integer): Boolean; static;
+    class function PatternTailIsLiteral(const APattern: string; const APatternIndex: Integer): Boolean; static; inline;
     // Compiled engine (registered patterns).  The pattern text handed to
     // CompilePattern must already be prepared (upper-cased for CI).
     class procedure AddToken(const AToken: TToken; var ATokens: TArray<TToken>; var ACount: Integer); static;
@@ -160,21 +160,21 @@ type
     class function ParseClassToken(const APattern: string; var AClassIndex: Integer; var AToken: TToken; const ALen: Integer): Boolean; static;
     class function CompilePattern(const APattern: string): TCompiledPattern; static;
     class function CharInCompiledClass(const AToken: TToken; const AChar: Char): Boolean; static;
-    class function LiteralMatchesAtCI(const AInput: string; const AInputIndex: Integer; const ALit: string): Boolean; static;
+    class function LiteralMatchesAtCI(const AInput: string; const AInputIndex: Integer; const ALit: string): Boolean; static; inline;
     class function MatchTokensCS(const ATokens: TArray<TToken>; const AInput: string; AInputIndex, ATokenIndex: Integer): Boolean; static;
     class function MatchTokensCI(const ATokens: TArray<TToken>; const AInput: string; AInputIndex, ATokenIndex: Integer): Boolean; static;
     function MatchCompiled(const ACompiled: TCompiledPattern; const AInput: string): Boolean;
     // Case-sensitive path (direct ordinal compare, no ToUpper calls)
     class function CharInClassCS(const APattern: string; const AStart, AEnd: Integer; const AChar: Char): Boolean; static;
     class function AltMatchesAtCS(const AInput: string; const AInputIndex: Integer;
-      const APattern: string; const AAltStart, AAltLen: Integer): Boolean; static;
+      const APattern: string; const AAltStart, AAltLen: Integer): Boolean; static; inline;
     class function MatchQuotedAltClassCS(const AInput, APattern: string;
       const AInputIndex, AClassStart, AClassEnd: Integer): Boolean; static;
     class function MatchRecursiveCS(const AInput, APattern: string; AInputIndex, APatternIndex: Integer): Boolean; static;
     // Case-insensitive path (ToUpper compare)
     class function CharInClassCI(const APattern: string; const AStart, AEnd: Integer; const AChar: Char): Boolean; static;
     class function AltMatchesAtCI(const AInput: string; const AInputIndex: Integer; const APattern: string; const AAltStart,
-      AAltLen: Integer): Boolean; static;
+      AAltLen: Integer): Boolean; static; inline;
     class function MatchQuotedAltClassCI(const AInput, APattern: string; const AInputIndex, AClassStart, AClassEnd: Integer): Boolean; static;
     class function MatchRecursiveCI(const AInput, APattern: string; AInputIndex, APatternIndex: Integer): Boolean; static;
     // Walks FPatterns and returns True on the first match.  FPatterns are
