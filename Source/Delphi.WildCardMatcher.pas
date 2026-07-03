@@ -208,13 +208,13 @@ type
     function GetExcludePatterns: TArray<string>;
   public
     class function Create(const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
-    class function Create(const AIncludePattern, AExcludePattern: string;
-      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
-    class function Create(const AIncludePatterns, AExcludePatterns: TArray<string>;
-      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePattern, AExcludePattern: string; const ACaseSensitive: Boolean = False): TWildCardFilter;
+      overload; static;
+    class function Create(const AIncludePatterns, AExcludePatterns: TArray<string>; const ACaseSensitive: Boolean = False): TWildCardFilter;
+      overload; static;
     // TStrings overload tolerates nil for either list (treated as empty).
-    class function Create(const AIncludePatterns, AExcludePatterns: TStrings;
-      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePatterns, AExcludePatterns: TStrings; const ACaseSensitive: Boolean = False): TWildCardFilter;
+      overload; static;
 
     // True when AInput passes the include stage and is not excluded.
     function Accepts(const AInput: string): Boolean;
