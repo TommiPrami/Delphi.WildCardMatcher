@@ -79,6 +79,9 @@
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
         <DCCReference Include="..\Source\Delphi.WildCardMatcher.pas"/>
+        <DCCReference Include="Delphi.WildCardMatcher.Benchmark.Types.pas"/>
+        <DCCReference Include="Delphi.WildCardMatcher.Benchmark.Utils.pas"/>
+        <DCCReference Include="Delphi.WildCardMatcher.Benchmarks.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
         </BuildConfiguration>

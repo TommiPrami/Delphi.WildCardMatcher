@@ -1,0 +1,30 @@
+WildCardMatcher benchmark run - 3.7.2026 9.05.05
+
+Parity suite passed (registered vs ad-hoc engine, CI + CS).
+
+=== S1 single mask *.pas  (1 patterns x 1000 inputs x 1000 loops, best of 5 rounds) ===
+  registered CI                   7,0 ns/op   (best     7,03 ms, 1000000 ops)
+  ad-hoc CI                      37,1 ns/op   (best    37,09 ms, 1000000 ops)
+  registered CS                   6,4 ns/op   (best     6,36 ms, 1000000 ops)
+  ad-hoc CS                      23,6 ns/op   (best    23,63 ms, 1000000 ops)
+
+=== S2 8-mask ignore set  (8 patterns x 1000 inputs x 1000 loops, best of 5 rounds) ===
+  registered CI                  45,2 ns/op   (best    45,24 ms, 1000000 ops)
+  ad-hoc CI                     202,4 ns/op   (best   202,42 ms, 1000000 ops)
+  registered CS                  41,7 ns/op   (best    41,65 ms, 1000000 ops)
+  ad-hoc CS                      92,9 ns/op   (best    92,88 ms, 1000000 ops)
+
+=== S3 worst-case backtracking  (1 patterns x 1 inputs x 100000 loops, best of 5 rounds) ===
+  registered CI                1176,3 ns/op   (best   117,63 ms, 100000 ops)
+  ad-hoc CI                    2035,3 ns/op   (best   203,53 ms, 100000 ops)
+  registered CS                 539,4 ns/op   (best    53,94 ms, 100000 ops)
+  ad-hoc CS                     783,3 ns/op   (best    78,33 ms, 100000 ops)
+
+=== S4 quoted-alt mask  (1 patterns x 1000 inputs x 1000 loops, best of 5 rounds) ===
+  registered CI                 150,6 ns/op   (best   150,56 ms, 1000000 ops)
+  ad-hoc CI                     897,1 ns/op   (best   897,10 ms, 1000000 ops)
+  registered CS                 110,4 ns/op   (best   110,35 ms, 1000000 ops)
+  ad-hoc CS                     851,7 ns/op   (best   851,70 ms, 1000000 ops)
+
+Benchmark complete.
+Results saved to: C:\git_opensource\TommiPrami\Delphi.WildCardMatcher\Benchmarks\Win32\WildCardMatcherBenchmarkResults.txt

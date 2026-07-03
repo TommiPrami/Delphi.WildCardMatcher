@@ -2,9 +2,12 @@
 
 Harness: `Delphi.WildCardMatcher.Benchmark.dpr` (current unit) and
 `Baseline\Delphi.WildCardMatcher.BaselineBenchmark.dpr` (frozen
-pre-optimization unit from commit `0e83678`).  Both include the same
-`BenchmarkBody.inc`, so they always run identical scenarios.  See the
-`.dpr` headers for build/run instructions.
+pre-optimization unit from commit `0e83678`).  Both share the same suite
+unit (`Delphi.WildCardMatcher.Benchmarks.pas`, with helpers in
+`...Benchmark.Utils.pas` / `...Benchmark.Types.pas`), so they always run
+identical scenarios.  Each run also writes its output to
+`WildCardMatcherBenchmarkResults.txt` next to the exe.  See the `.dpr`
+headers for build/run instructions.
 
 All runs Win32, dcc32 37.0 with `-$O+ -$R- -$Q-`.  A parity suite
 (registered engine vs ad-hoc engine, CI and CS) must pass before anything

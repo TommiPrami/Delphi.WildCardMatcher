@@ -2,37 +2,44 @@
 
 // Permanent performance harness for Delphi.WildCardMatcher.
 //
-// TWildCard has two engines that MUST agree:
-//   registered - patterns compiled to token programs at Create
-//                (TWildCard.Create(patterns).Match(input))
-//   ad-hoc     - interpreting engine, pattern scanned per call
-//                (TWildCard.Create.Match(input, pattern))
+// Runs a parity suite (registered/compiled engine vs ad-hoc/interpreting
+// engine, CI and CS - must agree on every edge case) and then times both
+// engines over realistic scenarios, best-of-rounds.  Output goes to the
+// console and to WildCardMatcherBenchmarkResults.txt next to the exe.
 //
-// The shared body (BenchmarkBody.inc) first runs a parity suite over both
-// engines (CI and CS) and aborts on any disagreement - run this after ANY
-// change to the matcher.  It then times both engines over realistic
-// scenarios, running each variant several rounds and reporting the BEST
-// round (the machine is never idle; the minimum is the closest estimate
-// of the undisturbed cost).  Historical results live in RESULTS.md.
-//
-// Baseline\Delphi.WildCardMatcher.BaselineBenchmark.dpr includes the SAME
-// body against the frozen pre-optimization unit (commit 0e83678), so any
-// future run can be compared against the original engine on the same
-// machine.
-//
-// Adding a scenario or parity case: edit BenchmarkBody.inc - both
-// programs pick it up automatically.
+// The suite itself lives in Delphi.WildCardMatcher.Benchmarks.pas, shared
+// with Baseline\Delphi.WildCardMatcher.BaselineBenchmark.dpr which binds
+// the SAME suite against the frozen pre-optimization unit (commit
+// 0e83678) - so any run can be compared against the original engine on
+// the same machine.  Historical results live in RESULTS.md.
 //
 // Build & run (optimization ON - do not benchmark Debug builds):
 //   "%ProgramFiles(x86)%\Embarcadero\Studio\37.0\bin\rsvars.bat"
-//   dcc32 -B -$O+ -$R- -$Q- -U"..\Source" -E"Win32" -N"Win32" Delphi.WildCardMatcher.Benchmark.dpr
+//   dcc32 -B -$O+ -$R- -$Q- -E"Win32" -N"Win32" Delphi.WildCardMatcher.Benchmark.dpr
 //   Win32\Delphi.WildCardMatcher.Benchmark.exe
 
 {$APPTYPE CONSOLE}
 
 uses
   System.SysUtils,
-  System.Diagnostics,
-  Delphi.WildCardMatcher in '..\Source\Delphi.WildCardMatcher.pas';
+  Delphi.WildCardMatcher in '..\Source\Delphi.WildCardMatcher.pas',
+  Delphi.WildCardMatcher.Benchmark.Types in 'Delphi.WildCardMatcher.Benchmark.Types.pas',
+  Delphi.WildCardMatcher.Benchmark.Utils in 'Delphi.WildCardMatcher.Benchmark.Utils.pas',
+  Delphi.WildCardMatcher.Benchmarks in 'Delphi.WildCardMatcher.Benchmarks.pas';
 
-{$I BenchmarkBody.inc}
+begin
+  try
+    RunParitySuite;
+    RunBenchmarkScenarios;
+
+    Log('');
+    Log('Benchmark complete.');
+    Log('Results saved to: %s', [LogFileName]);
+  except
+    on E: Exception do
+    begin
+      WriteLn(E.ClassName, ': ', E.Message);
+      Halt(1);
+    end;
+  end;
+end.
