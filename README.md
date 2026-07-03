@@ -248,6 +248,16 @@ matched - keep the call site simple.
 Modern Delphi (records with methods, `class function ... static`, generics).
 Tested on Delphi 12.x. No third-party dependencies.
 
+On Win32 the hottest `*`-scan loops use SSE2 kernels **by default** -
+roughly 1.3-2.4x faster on backtracking-heavy patterns, no effect on
+simple masks. Define `PUREPASCAL` to opt out and compile plain pascal
+loops for builds that must run on very old CPUs. All other targets
+always compile the pure pascal path. The choice is static (no runtime
+CPU detection). SSE2 is sufficient here - newer instruction sets
+(SSE4.2, AVX2) would not bring significant gains for file-mask-length
+inputs. See [Benchmarks/RESULTS.md](Benchmarks/RESULTS.md) for
+measurements.
+
 ## Tests
 
 DUnitX-based test suite under `Unittests\`. Open

@@ -20,6 +20,40 @@ cost.
 call over the whole pattern set.**  1 ns = one billionth of a second;
 100 ns/op = 10 million Match calls per second.
 
+## 2026-07-03: SSE2 scan kernels (USE_SSE2 define, on by default on Win32)
+
+The '*' first-char skip loops - the hottest loops in backtracking-heavy
+patterns - got SSE kernels (`ScanCharIndex` / `ScanCharIndexCI`, 8 UTF-16
+chars per step, PCMPEQW + PMOVMSKB).  On Win32 the kernels are the
+DEFAULT; define `PUREPASCAL` to opt out for very old CPUs (other targets
+always compile pure pascal).  Same day, same machine, best of 5; parity
+suite and all 94 unit tests pass in BOTH variants.
+
+| Scenario / variant | pure pascal | USE_SSE2 | speedup |
+| --- | ---: | ---: | ---: |
+| S3 worst-case, registered CI | 1274 | **602** | 2.1x |
+| S3 worst-case, ad-hoc CI | 2047 | **863** | 2.4x |
+| S3 worst-case, registered CS | 585 | **467** | 1.3x |
+| S3 worst-case, ad-hoc CS | 785 | **499** | 1.6x |
+| S1 / S2 / S4 (all variants) | - | - | flat (within noise) |
+
+S1/S2/S4 do not exercise the skip loops (tail anchors and alt-group
+scans dominate there), so the kernels neither help nor hurt them.  The
+CI kernel returns CANDIDATE positions (either case variant, or any char
+>= U+0080) and the caller re-verifies with the scalar Unicode check, so
+semantics are bit-identical to pure pascal - including exotic mappings
+like U+017F -> 'S'.
+
+Deliberately NOT vectorized: FastToUpper / IsAsciiDigit (single-char;
+Delphi cannot inline asm routines, so a call costs more than the two
+compares), literal-run compares (typical runs 3-8 chars, below SIMD
+break-even), FindClassEnd (ad-hoc-only cost; algorithmic caching would
+beat SIMD there).  PCMPISTRI (the actual SSE4.2 string instruction) was
+avoided on purpose - higher latency than compare+movemask on modern
+cores.  A future AVX2 variant would widen the same kernels to 16 chars
+per step; expected gain is modest since the scans are short-ish and
+branch-bound.
+
 ## 2026-07-02 (c): baseline vs current, best-of-5 methodology
 
 Baseline = commit `0e83678` ("New Syntax, EOL stuff met its End Of Life"):

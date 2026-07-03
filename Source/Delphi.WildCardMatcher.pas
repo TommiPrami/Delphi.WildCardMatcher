@@ -73,6 +73,34 @@
 // Instance Match(input, pattern) calls use the ad-hoc pattern only by
 // default; pass AAlsoMatchRegistered = True to also try the registered set.
 
+// SIMD selection: the SSE2-accelerated scan kernels for the '*' skip
+// loops (the hottest loops in backtracking-heavy patterns) are the
+// DEFAULT.  Define PUREPASCAL (project option or -DPUREPASCAL) to opt out
+// and compile the plain pascal loops instead - for builds that must run
+// on very old CPUs.  No runtime CPU detection - the choice is static.
+//
+// Each accelerated code block is guarded by instruction set AND platform,
+// e.g. {$IF Defined(USE_SSE2) and Defined(WIN32)}.  This leaves room for
+// separate Win64 blocks (x64 asm differs) without touching the call
+// sites' structure.  Targets with no matching block compile the pure
+// pascal path regardless of defines.
+//
+// SSE2 is deliberate and sufficient - newer instruction sets would NOT
+// bring significant gains for this workload:
+//   - SSE4.2's own string instructions (PCMPISTRI) have HIGHER latency
+//     than the plain PCMPEQW + PMOVMSKB sequence used here.
+//   - AVX2 (16 chars per step instead of 8) only pays off on long scans;
+//     file-mask inputs break at '\' every 8-25 chars, so the per-call
+//     fixed cost (setup, tail, candidate verification) dominates and the
+//     estimated ceiling is ~0-10% on the worst-case scenario, ~0%
+//     elsewhere - while adding VZEROUPPER transition costs.  Revisit only
+//     if the matcher is ever pointed at long inputs (file contents,
+//     multi-KB strings), where wider vectors would see a real 1.5-1.8x
+//     on the scan portion.
+{$IFNDEF PUREPASCAL}
+  {$DEFINE USE_SSE2}
+{$ENDIF}
+
 interface
 
 uses
@@ -307,6 +335,136 @@ begin
 end;
 
 { TWildCard }
+
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+// SSE scan kernels for the '*' skip loops (Win32).  Both process 8 UTF-16
+// chars per iteration with a scalar tail.
+//
+// ScanCharIndex: 0-based index of the first occurrence of AChar in
+// AText[0..ACount-1], or -1 when not present.  Exact (case-sensitive)
+// match - the caller can recurse directly on a hit.
+function ScanCharIndex(AText: PChar; ACount: Integer; AChar: Char): Integer;
+asm
+  // EAX = AText, EDX = ACount, ECX = AChar
+  PUSH      EBX
+  MOVD      XMM1, ECX
+  PUNPCKLWD XMM1, XMM1
+  PSHUFD    XMM1, XMM1, 0
+  XOR       EBX, EBX            // running char index
+@@Loop8:
+  CMP       EDX, 8
+  JL        @@Tail
+  MOVDQU    XMM0, [EAX]
+  PCMPEQW   XMM0, XMM1
+  PMOVMSKB  ECX, XMM0
+  TEST      ECX, ECX
+  JNZ       @@Found
+  ADD       EAX, 16
+  ADD       EBX, 8
+  SUB       EDX, 8
+  JMP       @@Loop8
+@@Found:
+  BSF       ECX, ECX
+  SHR       ECX, 1              // byte offset -> char offset
+  LEA       EAX, [EBX+ECX]
+  JMP       @@Done
+@@Tail:
+  MOVD      ECX, XMM1           // recover AChar in CX
+@@TailLoop:
+  TEST      EDX, EDX
+  JZ        @@NotFound
+  CMP       WORD PTR [EAX], CX
+  JE        @@TailFound
+  ADD       EAX, 2
+  INC       EBX
+  DEC       EDX
+  JMP       @@TailLoop
+@@TailFound:
+  MOV       EAX, EBX
+  JMP       @@Done
+@@NotFound:
+  MOV       EAX, -1
+@@Done:
+  POP       EBX
+end;
+
+// ScanCharIndexCI: 0-based index of the first CANDIDATE position in
+// AText[0..ACount-1], or -1.  AChars packs the pre-upper-cased pattern
+// char in the LOW word and its ASCII-lowercase variant in the HIGH word.
+// A candidate is a char equal to either variant, or ANY char >= U+0080
+// (non-ASCII needs the scalar Unicode ToUpper check - e.g. U+017F upper-
+// cases to 'S', which a two-value compare would miss).  The caller MUST
+// re-verify the candidate with the scalar test before recursing.
+function ScanCharIndexCI(AText: PChar; ACount: Integer; AChars: Cardinal): Integer;
+asm
+  // EAX = AText, EDX = ACount, ECX = AChars (low = upper, high = lower)
+  PUSH      EBX
+  PUSH      ESI
+  PUSH      EDI
+  MOVZX     ESI, CX             // upper variant
+  MOV       EDI, ECX
+  SHR       EDI, 16             // lower variant
+  MOVD      XMM1, ESI
+  PUNPCKLWD XMM1, XMM1
+  PSHUFD    XMM1, XMM1, 0
+  MOVD      XMM2, EDI
+  PUNPCKLWD XMM2, XMM2
+  PSHUFD    XMM2, XMM2, 0
+  PCMPEQW   XMM6, XMM6          // all ones
+  MOVDQA    XMM7, XMM6
+  PSLLW     XMM7, 7             // $FF80 per lane (non-ASCII bits)
+  PXOR      XMM5, XMM5
+  XOR       EBX, EBX            // running char index
+@@Loop8:
+  CMP       EDX, 8
+  JL        @@TailLoop
+  MOVDQU    XMM0, [EAX]
+  MOVDQA    XMM3, XMM0
+  MOVDQA    XMM4, XMM0
+  PCMPEQW   XMM3, XMM1          // = upper variant
+  PCMPEQW   XMM4, XMM2          // = lower variant
+  POR       XMM3, XMM4
+  PAND      XMM0, XMM7          // isolate non-ASCII bits
+  PCMPEQW   XMM0, XMM5          // FFFF where ASCII
+  PANDN     XMM0, XMM6          // FFFF where non-ASCII
+  POR       XMM3, XMM0          // matches OR non-ASCII candidates
+  PMOVMSKB  ECX, XMM3
+  TEST      ECX, ECX
+  JNZ       @@Found
+  ADD       EAX, 16
+  ADD       EBX, 8
+  SUB       EDX, 8
+  JMP       @@Loop8
+@@Found:
+  BSF       ECX, ECX
+  SHR       ECX, 1
+  LEA       EAX, [EBX+ECX]
+  JMP       @@Done
+@@TailLoop:
+  TEST      EDX, EDX
+  JZ        @@NotFound
+  MOVZX     ECX, WORD PTR [EAX]
+  CMP       ECX, $0080
+  JAE       @@Hit               // non-ASCII -> candidate
+  CMP       ECX, ESI
+  JE        @@Hit
+  CMP       ECX, EDI
+  JE        @@Hit
+  ADD       EAX, 2
+  INC       EBX
+  DEC       EDX
+  JMP       @@TailLoop
+@@Hit:
+  MOV       EAX, EBX
+  JMP       @@Done
+@@NotFound:
+  MOV       EAX, -1
+@@Done:
+  POP       EDI
+  POP       ESI
+  POP       EBX
+end;
+{$ENDIF}
 
 class function TWildCard.IsAsciiDigit(const AChar: Char): Boolean;
 begin
@@ -561,6 +719,9 @@ var
   LInputLen, LPatternLen: Integer;
   LTailLen, LTailStart, LIdx: Integer;
   LNextChar: Char;
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+  LRel: Integer;
+{$ENDIF}
 begin
   LInputLen := Length(AInput);
   LPatternLen := Length(APattern);
@@ -639,6 +800,21 @@ begin
               end;
           else
             // Plain literal - skip straight to positions where it occurs.
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+            while AInputIdx <= LInputLen do
+            begin
+              LRel := ScanCharIndex(PChar(Pointer(AInput)) + AInputIdx - 1, LInputLen - AInputIdx + 1, LNextChar);
+              if LRel < 0 then
+                Break;
+
+              Inc(AInputIdx, LRel);
+
+              if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
+                Exit(True);
+
+              Inc(AInputIdx);
+            end;
+{$ELSE}
             while AInputIdx <= LInputLen do
             begin
               if AInput[AInputIdx] = LNextChar then
@@ -647,6 +823,7 @@ begin
 
               Inc(AInputIdx);
             end;
+{$ENDIF}
           end;
 
           Exit(False);
@@ -879,6 +1056,10 @@ var
   LInputLen, LPatternLen: Integer;
   LTailLen, LTailStart, LIdx: Integer;
   LNextChar: Char;
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+  LRel: Integer;
+  LCharPair: Cardinal;
+{$ENDIF}
 begin
   LInputLen := Length(AInput);
   LPatternLen := Length(APattern);
@@ -959,6 +1140,29 @@ begin
           else
             // Plain literal (pattern side is pre-upper-cased) - skip
             // straight to positions where it occurs.
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+            if (LNextChar >= 'A') and (LNextChar <= 'Z') then
+              LCharPair := Cardinal(Ord(LNextChar)) or (Cardinal(Ord(LNextChar) + 32) shl 16)
+            else
+              LCharPair := Cardinal(Ord(LNextChar)) or (Cardinal(Ord(LNextChar)) shl 16);
+
+            while AInputIdx <= LInputLen do
+            begin
+              LRel := ScanCharIndexCI(PChar(Pointer(AInput)) + AInputIdx - 1, LInputLen - AInputIdx + 1, LCharPair);
+              if LRel < 0 then
+                Break;
+
+              Inc(AInputIdx, LRel);
+
+              // Candidates include non-ASCII chars - re-verify before
+              // recursing (see ScanCharIndexCI).
+              if (AInput[AInputIdx] = LNextChar) or (FastToUpper(AInput[AInputIdx]) = LNextChar) then
+                if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
+                  Exit(True);
+
+              Inc(AInputIdx);
+            end;
+{$ELSE}
             while AInputIdx <= LInputLen do
             begin
               if (AInput[AInputIdx] = LNextChar) or (FastToUpper(AInput[AInputIdx]) = LNextChar) then
@@ -967,6 +1171,7 @@ begin
 
               Inc(AInputIdx);
             end;
+{$ENDIF}
           end;
 
           Exit(False);
@@ -1331,6 +1536,9 @@ var
   LLitLen, LIdx, LMaxStart: Integer;
   LAltIdx, LAltLen: Integer;
   LChar: Char;
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+  LRel: Integer;
+{$ENDIF}
 begin
   LInputLen := Length(AInput);
 
@@ -1448,6 +1656,21 @@ begin
                 // First-char skip: only recurse where the literal starts.
                 LChar := LNext.Lit[1];
 
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+                while AInputIdx <= LMaxStart do
+                begin
+                  LRel := ScanCharIndex(PChar(Pointer(AInput)) + AInputIdx - 1, LMaxStart - AInputIdx + 1, LChar);
+                  if LRel < 0 then
+                    Break;
+
+                  Inc(AInputIdx, LRel);
+
+                  if MatchTokensCS(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                    Exit(True);
+
+                  Inc(AInputIdx);
+                end;
+{$ELSE}
                 while AInputIdx <= LMaxStart do
                 begin
                   if AInput[AInputIdx] = LChar then
@@ -1456,6 +1679,7 @@ begin
 
                   Inc(AInputIdx);
                 end;
+{$ENDIF}
               end;
             tkDigit:
               begin
@@ -1506,6 +1730,10 @@ var
   LLitLen, LIdx, LMaxStart: Integer;
   LAltIdx, LAltLen: Integer;
   LChar: Char;
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+  LRel: Integer;
+  LCharPair: Cardinal;
+{$ENDIF}
 begin
   LInputLen := Length(AInput);
 
@@ -1615,6 +1843,29 @@ begin
 
                 LChar := LNext.Lit[1];
 
+{$IF Defined(USE_SSE2) and Defined(WIN32)}
+                if (LChar >= 'A') and (LChar <= 'Z') then
+                  LCharPair := Cardinal(Ord(LChar)) or (Cardinal(Ord(LChar) + 32) shl 16)
+                else
+                  LCharPair := Cardinal(Ord(LChar)) or (Cardinal(Ord(LChar)) shl 16);
+
+                while AInputIdx <= LMaxStart do
+                begin
+                  LRel := ScanCharIndexCI(PChar(Pointer(AInput)) + AInputIdx - 1, LMaxStart - AInputIdx + 1, LCharPair);
+                  if LRel < 0 then
+                    Break;
+
+                  Inc(AInputIdx, LRel);
+
+                  // Candidates include non-ASCII chars - re-verify before
+                  // recursing (see ScanCharIndexCI).
+                  if (AInput[AInputIdx] = LChar) or (FastToUpper(AInput[AInputIdx]) = LChar) then
+                    if MatchTokensCI(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                      Exit(True);
+
+                  Inc(AInputIdx);
+                end;
+{$ELSE}
                 while AInputIdx <= LMaxStart do
                 begin
                   if (AInput[AInputIdx] = LChar) or (FastToUpper(AInput[AInputIdx]) = LChar) then
@@ -1623,6 +1874,7 @@ begin
 
                   Inc(AInputIdx);
                 end;
+{$ENDIF}
               end;
             tkDigit:
               begin
