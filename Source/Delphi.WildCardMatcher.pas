@@ -766,8 +766,7 @@ begin
     Exit(False);
 
   for LIdx := 0 to AAltLen - 1 do
-    if (AInput[AInputIdx + LIdx] <> APattern[AAltStart + LIdx]) and
-       (FastToUpper(AInput[AInputIdx + LIdx]) <> APattern[AAltStart + LIdx]) then
+    if (AInput[AInputIdx + LIdx] <> APattern[AAltStart + LIdx]) and (FastToUpper(AInput[AInputIdx + LIdx]) <> APattern[AAltStart + LIdx]) then
       Exit(False);
 
   Result := True;
@@ -909,8 +908,7 @@ begin
               Exit(False);
 
             for LIdx := 0 to LTailLen - 1 do
-              if (AInput[LTailStart + LIdx] <> APattern[APatternIdx + LIdx]) and
-                 (FastToUpper(AInput[LTailStart + LIdx]) <> APattern[APatternIdx + LIdx]) then
+              if (AInput[LTailStart + LIdx] <> APattern[APatternIdx + LIdx]) and (FastToUpper(AInput[LTailStart + LIdx]) <> APattern[APatternIdx + LIdx]) then
                 Exit(False);
 
             Exit(True);
@@ -1167,11 +1165,13 @@ begin
       SetLength(AToken.Ranges, Length(AToken.Ranges) + 1);
       AToken.Ranges[High(AToken.Ranges)].Lo := APattern[LPos];
       AToken.Ranges[High(AToken.Ranges)].Hi := APattern[LPos + 2];
+
       Inc(LPos, 3);
     end
     else
     begin
       AToken.Singles := AToken.Singles + APattern[LPos];
+
       Inc(LPos);
     end;
   end;
@@ -1410,8 +1410,8 @@ begin
               LAltLen := Length(LTok.Alts[LAltIdx]);
 
               if (LAltLen = 0) or
-                 ((AInputIdx + LAltLen - 1 <= LInputLen) and
-                  CompareMem(@AInput[AInputIdx], Pointer(LTok.Alts[LAltIdx]), LAltLen * SizeOf(Char))) then
+                ((AInputIdx + LAltLen - 1 <= LInputLen) and
+                CompareMem(@AInput[AInputIdx], Pointer(LTok.Alts[LAltIdx]), LAltLen * SizeOf(Char))) then
                 if MatchTokensCS(ATokens, AInput, AInputIdx + LAltLen, ATokenIdx + 1) then
                   Exit(True);
             end;
