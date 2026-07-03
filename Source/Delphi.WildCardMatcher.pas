@@ -122,7 +122,7 @@ type
     FCaseSensitive: Boolean;
     // Case-independent helpers
     class function IsAsciiDigit(const AChar: Char): Boolean; static; inline;
-    class function FindClassEnd(const APattern: string; const AStart: Integer; out AIsQuotedAlt: Boolean): Integer; static;
+    class function FindClassEnd(const APattern: string; const AStart: Integer; var AIsQuotedAlt: Boolean): Integer; static;
     class function PatternTailIsLiteral(const APattern: string; const APatternIdx: Integer): Boolean; static;
     // Compiled engine (registered patterns).  The pattern text handed to
     // CompilePattern must already be prepared (upper-cased for CI).
@@ -291,6 +291,7 @@ begin
   for LIdx := LFirst to LLen do
   begin
     LChar := AStr[LIdx];
+
     if (LChar >= 'a') and (LChar <= 'z') then
       Result[LIdx] := Chr(Ord(LChar) - 32)
     else if Ord(LChar) < 128 then
@@ -300,12 +301,14 @@ begin
   end;
 end;
 
+{ TWildCard }
+
 class function TWildCard.IsAsciiDigit(const AChar: Char): Boolean;
 begin
   Result := (AChar >= '0') and (AChar <= '9');
 end;
 
-class function TWildCard.FindClassEnd(const APattern: string; const AStart: Integer; out AIsQuotedAlt: Boolean): Integer;
+class function TWildCard.FindClassEnd(const APattern: string; const AStart: Integer; var AIsQuotedAlt: Boolean): Integer;
 var
   LIndex: Integer;
   LPatternLen: Integer;
@@ -421,8 +424,8 @@ begin
     Result := not Result;
 end;
 
-class function TWildCard.AltMatchesAtCS(const AInput: string; const AInputIdx: Integer;
-  const APattern: string; const AAltStart, AAltLen: Integer): Boolean;
+class function TWildCard.AltMatchesAtCS(const AInput: string; const AInputIdx: Integer; const APattern: string; const AAltStart,
+  AAltLen: Integer): Boolean;
 var
   LIdx: Integer;
 begin
@@ -440,8 +443,7 @@ begin
   Result := True;
 end;
 
-class function TWildCard.MatchQuotedAltClassCS(const AInput, APattern: string;
-  const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
+class function TWildCard.MatchQuotedAltClassCS(const AInput, APattern: string; const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
 var
   LIdx: Integer;
   LNegated: Boolean;
@@ -744,8 +746,8 @@ begin
     Result := not Result;
 end;
 
-class function TWildCard.AltMatchesAtCI(const AInput: string; const AInputIdx: Integer;
-  const APattern: string; const AAltStart, AAltLen: Integer): Boolean;
+class function TWildCard.AltMatchesAtCI(const AInput: string; const AInputIdx: Integer; const APattern: string; const AAltStart,
+  AAltLen: Integer): Boolean;
 var
   LIdx: Integer;
 begin
@@ -766,8 +768,7 @@ begin
   Result := True;
 end;
 
-class function TWildCard.MatchQuotedAltClassCI(const AInput, APattern: string;
-  const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
+class function TWildCard.MatchQuotedAltClassCI(const AInput, APattern: string; const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
 var
   LIdx: Integer;
   LNegated: Boolean;
@@ -1013,8 +1014,7 @@ begin
         // only when the direct ordinal compare misses - uppercase input
         // and non-letters (dots, digits, path separators) hit the first
         // test and skip FastToUpper entirely.
-        if (AInput[AInputIdx] <> APattern[APatternIdx]) and
-           (FastToUpper(AInput[AInputIdx]) <> APattern[APatternIdx]) then
+        if (AInput[AInputIdx] <> APattern[APatternIdx]) and (FastToUpper(AInput[AInputIdx]) <> APattern[APatternIdx]) then
           Exit(False);
 
         Inc(AInputIdx);
@@ -1029,32 +1029,27 @@ end;
 { TWildCard - compiled engine (registered patterns) }
 
 class function TWildCard.CompilePattern(const APattern: string): TCompiledPattern;
-var
-  LLen, LIdx, LLitStart: Integer;
-  LTokens: TArray<TToken>;
-  LCount: Integer;
-  LTok: TToken;
-  LMin: Integer;
 
-  procedure Add(const AToken: TToken);
+  procedure Add(const AToken: TToken; var ATokens: TArray<TToken>; var ACount: Integer);
   begin
-    if LCount = Length(LTokens) then
-      SetLength(LTokens, (LCount * 2) + 8);
+    if ACount = Length(ATokens) then
+      SetLength(ATokens, (ACount * 2) + 8);
 
-    LTokens[LCount] := AToken;
-    Inc(LCount);
+    ATokens[ACount] := AToken;
+    Inc(ACount);
   end;
 
-  procedure FlushLiteral(const AEndExclusive: Integer);
+  procedure FlushLiteral(const AEndExclusive: Integer; const ALitStart: Integer; var ATokens: TArray<TToken>; var ACount: Integer);
   var
     LLitTok: TToken;
   begin
-    if LLitStart < AEndExclusive then
+    if ALitStart < AEndExclusive then
     begin
       LLitTok := Default(TToken);
+
       LLitTok.Kind := tkLiteral;
-      LLitTok.Lit := Copy(APattern, LLitStart, AEndExclusive - LLitStart);
-      Add(LLitTok);
+      LLitTok.Lit := Copy(APattern, ALitStart, AEndExclusive - ALitStart);
+      Add(LLitTok, ATokens, ACount);
     end;
   end;
 
@@ -1062,7 +1057,7 @@ var
   // ']'.  Mirrors the interpreting engine's FindClassEnd + CharInClass* +
   // MatchQuotedAltClass* parsing rules exactly - the two engines MUST stay
   // in agreement (the benchmark app has a parity suite that checks this).
-  function ParseClass(var AClassIdx: Integer; out AToken: TToken): Boolean;
+  function ParseClass(var AClassIdx: Integer; var AToken: TToken; const ALen: Integer): Boolean;
   var
     LPos, LContentStart, LContentEnd, LQStart: Integer;
     LAltCount: Integer;
@@ -1072,13 +1067,13 @@ var
 
     LPos := AClassIdx + 1;
 
-    if (LPos <= LLen) and (APattern[LPos] = '!') then
+    if (LPos <= ALen) and (APattern[LPos] = '!') then
     begin
       AToken.Negate := True;
       Inc(LPos);
     end;
 
-    if (LPos <= LLen) and (APattern[LPos] = '"') then
+    if (LPos <= ALen) and (APattern[LPos] = '"') then
     begin
       // Quoted alternation form.
       AToken.Kind := tkAltGroup;
@@ -1088,7 +1083,7 @@ var
 
       while True do
       begin
-        if LPos > LLen then
+        if LPos > ALen then
           Exit(False);
 
         if APattern[LPos] = ']' then
@@ -1100,10 +1095,10 @@ var
         Inc(LPos);
         LQStart := LPos;
 
-        while (LPos <= LLen) and (APattern[LPos] <> '"') do
+        while (LPos <= ALen) and (APattern[LPos] <> '"') do
           Inc(LPos);
 
-        if LPos > LLen then
+        if LPos > ALen then
           Exit(False);
 
         LAlt := Copy(APattern, LQStart, LPos - LQStart);
@@ -1122,7 +1117,7 @@ var
 
         // After an alternative: '|' continues, ']' ends (checked at loop
         // top), anything else - including a bare '"' - is malformed.
-        if LPos > LLen then
+        if LPos > ALen then
           Exit(False);
 
         if APattern[LPos] = '|' then
@@ -1146,13 +1141,13 @@ var
     LContentEnd := LPos;
 
     // First content char ']' is a literal member.
-    if (LContentEnd <= LLen) and (APattern[LContentEnd] = ']') then
+    if (LContentEnd <= ALen) and (APattern[LContentEnd] = ']') then
       Inc(LContentEnd);
 
-    while (LContentEnd <= LLen) and (APattern[LContentEnd] <> ']') do
+    while (LContentEnd <= ALen) and (APattern[LContentEnd] <> ']') do
       Inc(LContentEnd);
 
-    if LContentEnd > LLen then
+    if LContentEnd > ALen then
       Exit(False);
 
     // Content spans [LContentStart .. LContentEnd - 1]; LContentEnd = ']'.
@@ -1180,6 +1175,12 @@ var
     Result := True;
   end;
 
+var
+  LLen, LIdx, LLitStart: Integer;
+  LTokens: TArray<TToken>;
+  LCount: Integer;
+  LTok: TToken;
+  LMin: Integer;
 begin
   Result.Valid := True;
   Result.Tokens := nil;
@@ -1195,44 +1196,44 @@ begin
     case APattern[LIdx] of
       '*':
         begin
-          FlushLiteral(LIdx);
+          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
 
           while (LIdx <= LLen) and (APattern[LIdx] = '*') do
             Inc(LIdx);
 
           LTok := Default(TToken);
           LTok.Kind := tkStar;
-          Add(LTok);
+          Add(LTok, LTokens, LCount);
 
           LLitStart := LIdx;
         end;
       '?':
         begin
-          FlushLiteral(LIdx);
+          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
 
           LTok := Default(TToken);
           LTok.Kind := tkAnyChar;
-          Add(LTok);
+          Add(LTok, LTokens, LCount);
 
           Inc(LIdx);
           LLitStart := LIdx;
         end;
       '#':
         begin
-          FlushLiteral(LIdx);
+          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
 
           LTok := Default(TToken);
           LTok.Kind := tkDigit;
-          Add(LTok);
+          Add(LTok, LTokens, LCount);
 
           Inc(LIdx);
           LLitStart := LIdx;
         end;
       '[':
         begin
-          FlushLiteral(LIdx);
+          FlushLiteral(LIdx, LLitStart, LTokens, LCount);
 
-          if not ParseClass(LIdx, LTok) then
+          if not ParseClass(LIdx, LTok, LLen) then
           begin
             // Malformed class - the pattern can never match anything
             // (same behaviour as the interpreting engine).
@@ -1240,7 +1241,7 @@ begin
             Exit;
           end;
 
-          Add(LTok);
+          Add(LTok, LTokens, LCount);
           LLitStart := LIdx;
         end;
     else
@@ -1248,7 +1249,7 @@ begin
     end;
   end;
 
-  FlushLiteral(LLen + 1);
+  FlushLiteral(LLen + 1, LLitStart, LTokens, LCount);
   SetLength(LTokens, LCount);
 
   // Back-fill MinRemain: minimum input chars needed from token i to the
@@ -1311,8 +1312,7 @@ var
   LIdx: Integer;
 begin
   for LIdx := 1 to Length(ALit) do
-    if (AInput[AInputIdx + LIdx - 1] <> ALit[LIdx]) and
-       (FastToUpper(AInput[AInputIdx + LIdx - 1]) <> ALit[LIdx]) then
+    if (AInput[AInputIdx + LIdx - 1] <> ALit[LIdx]) and (FastToUpper(AInput[AInputIdx + LIdx - 1]) <> ALit[LIdx]) then
       Exit(False);
 
   Result := True;
@@ -1685,17 +1685,18 @@ begin
   Result.FCompiled := nil;
 end;
 
-class function TWildCard.Create(const APattern: string;
-  const ACaseSensitive: Boolean): TWildCard;
+class function TWildCard.Create(const APattern: string; const ACaseSensitive: Boolean): TWildCard;
 begin
   Result.FCaseSensitive := ACaseSensitive;
   SetLength(Result.FPatterns, 1);
+
   if ACaseSensitive then
     Result.FPatterns[0] := APattern
   else
     Result.FPatterns[0] := FastUpperString(APattern);
 
   SetLength(Result.FCompiled, 1);
+
   Result.FCompiled[0] := CompilePattern(Result.FPatterns[0]);
 end;
 
@@ -1718,6 +1719,7 @@ begin
   end;
 
   SetLength(Result.FCompiled, Length(Result.FPatterns));
+
   for LIdx := 0 to High(Result.FPatterns) do
     Result.FCompiled[LIdx] := CompilePattern(Result.FPatterns[LIdx]);
 end;
@@ -1741,6 +1743,7 @@ begin
   end;
 
   SetLength(Result.FCompiled, Length(Result.FPatterns));
+
   for LIdx := 0 to High(Result.FPatterns) do
     Result.FCompiled[LIdx] := CompilePattern(Result.FPatterns[LIdx]);
 end;
@@ -1839,8 +1842,7 @@ begin
   Result.FHasIncludes := False;
 end;
 
-class function TWildCardFilter.Create(const AIncludePattern, AExcludePattern: string;
-  const ACaseSensitive: Boolean): TWildCardFilter;
+class function TWildCardFilter.Create(const AIncludePattern, AExcludePattern: string; const ACaseSensitive: Boolean): TWildCardFilter;
 begin
   // Convenience single-pattern form.  An empty string means "no pattern
   // for that side" (an empty include pattern would otherwise register a
@@ -1860,8 +1862,7 @@ begin
   Result.FHasIncludes := AIncludePattern <> '';
 end;
 
-class function TWildCardFilter.Create(const AIncludePatterns, AExcludePatterns: TArray<string>;
-  const ACaseSensitive: Boolean): TWildCardFilter;
+class function TWildCardFilter.Create(const AIncludePatterns, AExcludePatterns: TArray<string>; const ACaseSensitive: Boolean): TWildCardFilter;
 begin
   Result.FCaseSensitive := ACaseSensitive;
   Result.FInclude := TWildCard.Create(AIncludePatterns, ACaseSensitive);
@@ -1869,8 +1870,7 @@ begin
   Result.FHasIncludes := Length(AIncludePatterns) > 0;
 end;
 
-class function TWildCardFilter.Create(const AIncludePatterns, AExcludePatterns: TStrings;
-  const ACaseSensitive: Boolean): TWildCardFilter;
+class function TWildCardFilter.Create(const AIncludePatterns, AExcludePatterns: TStrings; const ACaseSensitive: Boolean): TWildCardFilter;
 begin
   Result.FCaseSensitive := ACaseSensitive;
 
