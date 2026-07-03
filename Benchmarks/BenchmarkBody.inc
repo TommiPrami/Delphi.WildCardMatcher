@@ -155,8 +155,7 @@ end;
 
 // Runs ARun BENCH_ROUNDS times, validates the match count every round and
 // reports the BEST (minimum) time.
-procedure TimeVariant(const AVariant: string; const ATotalOps, AExpectedTotal: Int64;
-  const ARun: TBenchRun);
+procedure TimeVariant(const AVariant: string; const ATotalOps, AExpectedTotal: Int64; const ARun: TBenchRun);
 var
   LRound: Integer;
   LWatch: TStopwatch;
@@ -195,8 +194,8 @@ end;
 //   ad-hoc CI/CS     - empty Create, Match(input, patterns) per call
 // Note: inputs are constructed so the expected match count is the same in
 // CS mode as in CI mode (exact-case inputs).
-procedure RunScenario(const AName: string; const AInputs: TArray<string>;
-  const APatterns: TArray<string>; const ALoops: Integer; const AExpectedPerIter: Integer);
+procedure RunScenario(const AName: string; const AInputs: TArray<string>; const APatterns: TArray<string>; const ALoops: Integer;
+  const AExpectedPerIter: Integer);
 var
   LRegisteredCI, LRegisteredCS, LAdhocCI, LAdhocCS: TWildCard;
   LTotalOps, LExpectedTotal: Int64;
@@ -263,7 +262,7 @@ begin
 end;
 
 { ----------------------------------------------------------------------- }
-{ Main                                                                     }
+{ Main                                                                    }
 { ----------------------------------------------------------------------- }
 
 var
@@ -280,35 +279,34 @@ begin
     // as the DUnitX speed fixtures).  Case matches the patterns exactly so
     // CS and CI expect the same counts.
     SetLength(GBulkInputs, BULK_INPUT_COUNT);
+
     for GIdx := 0 to (BULK_INPUT_COUNT div 20) - 1 do
       GBulkInputs[GIdx] := Format('MatchMe_%.4d.pas', [GIdx]);
+
     for GIdx := BULK_INPUT_COUNT div 20 to BULK_INPUT_COUNT - 1 do
       GBulkInputs[GIdx] := Format('Skip_%.4d.txt', [GIdx]);
 
     // Quoted-alt inputs: 5% under a 3rdparty folder, 95% elsewhere.
     SetLength(GAltInputs, BULK_INPUT_COUNT);
+
     for GIdx := 0 to (BULK_INPUT_COUNT div 20) - 1 do
       GAltInputs[GIdx] := Format('docs\3rdparty\notes_%.4d.md', [GIdx]);
+
     for GIdx := BULK_INPUT_COUNT div 20 to BULK_INPUT_COUNT - 1 do
       GAltInputs[GIdx] := Format('docs\internal\notes_%.4d.txt', [GIdx]);
 
     GWorstInput := TArray<string>.Create(WORST_CASE_LONG_PATH);
 
-    RunScenario('S1 single mask *.pas', GBulkInputs,
-      TArray<string>.Create('*.pas'),
-      BULK_LOOPS, BULK_INPUT_COUNT div 20);
+    RunScenario('S1 single mask *.pas', GBulkInputs, TArray<string>.Create('*.pas'), BULK_LOOPS, BULK_INPUT_COUNT div 20);
 
     RunScenario('S2 8-mask ignore set', GBulkInputs,
-      TArray<string>.Create('*.pas', '*.dpr', '*.dpk', '*.inc', '*.dfm', '*.res', '*.dproj', '*.groupproj'),
-      BULK_LOOPS, BULK_INPUT_COUNT div 20);
+      TArray<string>.Create('*.pas', '*.dpr', '*.dpk', '*.inc', '*.dfm', '*.res', '*.dproj', '*.groupproj'), BULK_LOOPS,
+      BULK_INPUT_COUNT div 20);
 
-    RunScenario('S3 worst-case backtracking', GWorstInput,
-      TArray<string>.Create(WORST_CASE_COMPLEX_PATTERN),
-      WORST_CASE_LOOPS, 0);
+    RunScenario('S3 worst-case backtracking', GWorstInput, TArray<string>.Create(WORST_CASE_COMPLEX_PATTERN), WORST_CASE_LOOPS, 0);
 
-    RunScenario('S4 quoted-alt mask', GAltInputs,
-      TArray<string>.Create('*["3rdparty"|"ThirdParty"]*.md'),
-      BULK_LOOPS, BULK_INPUT_COUNT div 20);
+    RunScenario('S4 quoted-alt mask', GAltInputs, TArray<string>.Create('*["3rdparty"|"ThirdParty"]*.md'), BULK_LOOPS,
+      BULK_INPUT_COUNT div 20);
 
     WriteLn;
     WriteLn('Benchmark complete.');
