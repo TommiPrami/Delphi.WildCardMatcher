@@ -131,6 +131,35 @@ LMask.Match(LFile, '*.dproj');           // only the ad-hoc pattern
 LMask.Match(LFile, '*.dproj', True);     // ad-hoc + registered set
 ```
 
+### Include / exclude filtering with `TWildCardFilter`
+
+`TWildCardFilter` wraps two matchers - one list that filters IN and one
+that filters OUT - with the usual filtering conventions:
+
+- empty include list = everything is included (the include list only
+  restricts when it has patterns)
+- empty exclude list = nothing is excluded
+- **exclude always wins over include**
+
+```pascal
+var
+  LFilter: TWildCardFilter;
+begin
+  LFilter := TWildCardFilter.Create(
+    ['*.pas', '*.dpr', '*.inc'],                 // filter in
+    ['*\__history\*', '*backup*', '*.tmp']);     // filter out
+
+  for var LFile in TDirectory.GetFiles(ARoot) do
+    if LFilter.Accepts(LFile) then
+      ProcessFile(LFile);
+end;
+```
+
+Both lists accept the full pattern syntax and are compiled at `Create`.
+Constructors take two single patterns, two `TArray<string>` or two
+`TStrings` (either may be `nil` / empty), plus the usual trailing
+`ACaseSensitive` flag that applies to both lists.
+
 ### Quoted-string alternation in practice
 
 Quoted alternation collapses several "same shape, different word" patterns
@@ -188,6 +217,25 @@ type
 
     property CaseSensitive: Boolean read FCaseSensitive;
     property RegisteredPatterns: TArray<string> read FPatterns;
+  end;
+
+  TWildCardFilter = record
+  public
+    class function Create(const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePattern, AExcludePattern: string;
+      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePatterns, AExcludePatterns: TArray<string>;
+      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePatterns, AExcludePatterns: TStrings;
+      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+
+    // True when AInput matches the include stage (or the include list is
+    // empty) and does not match any exclude pattern.
+    function Accepts(const AInput: string): Boolean;
+
+    property CaseSensitive: Boolean read FCaseSensitive;
+    property IncludePatterns: TArray<string> read GetIncludePatterns;
+    property ExcludePatterns: TArray<string> read GetExcludePatterns;
   end;
 ```
 

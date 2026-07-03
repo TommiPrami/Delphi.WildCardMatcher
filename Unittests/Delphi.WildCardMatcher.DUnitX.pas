@@ -196,6 +196,26 @@ type
     procedure CompiledCaseSensitiveTest;
     [Test]
     procedure CompiledEmptyAndMalformedPatternTest;
+
+    { TWildCardFilter: include / exclude wrapper }
+    [Test]
+    procedure FilterEmptyAcceptsEverythingTest;
+    [Test]
+    procedure FilterIncludeOnlyTest;
+    [Test]
+    procedure FilterExcludeOnlyTest;
+    [Test]
+    procedure FilterExcludeWinsOverIncludeTest;
+    [Test]
+    procedure FilterSinglePatternOverloadTest;
+    [Test]
+    procedure FilterTStringsOverloadWithNilTest;
+    [Test]
+    procedure FilterCaseSensitivityTest;
+    [Test]
+    procedure FilterQuotedAltPatternsTest;
+    [Test]
+    procedure FilterDefaultInitialisedRecordAcceptsEverythingTest;
   end;
 
 implementation
@@ -1166,6 +1186,155 @@ begin
 
   // A malformed pattern in a set must not break the others
   Assert.IsTrue(TWildCard.Create(TArray<string>.Create('[bad', '*.pas')).Match('Unit1.pas'));
+end;
+
+{ TWildCardFilter: include / exclude wrapper }
+
+procedure TWildCardMatcherDUnitX.FilterEmptyAcceptsEverythingTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // Both lists empty: everything passes.
+  LFilter := TWildCardFilter.Create;
+
+  Assert.IsTrue(LFilter.Accepts('anything.txt'));
+  Assert.IsTrue(LFilter.Accepts(''));
+  Assert.IsTrue(LFilter.Accepts('C:\some\path\file.pas'));
+end;
+
+procedure TWildCardMatcherDUnitX.FilterIncludeOnlyTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // Include list restricts; empty exclude list excludes nothing.
+  LFilter := TWildCardFilter.Create(
+    TArray<string>.Create('*.pas', '*.dpr'),
+    TArray<string>.Create());
+
+  Assert.IsTrue (LFilter.Accepts('Unit1.pas'));
+  Assert.IsTrue (LFilter.Accepts('Project.dpr'));
+  Assert.IsFalse(LFilter.Accepts('Notes.txt'));
+  Assert.IsFalse(LFilter.Accepts('Readme.md'));
+end;
+
+procedure TWildCardMatcherDUnitX.FilterExcludeOnlyTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // Empty include list = everything included; excludes carve out.
+  LFilter := TWildCardFilter.Create(
+    TArray<string>.Create(),
+    TArray<string>.Create('*backup*', '*.tmp'));
+
+  Assert.IsTrue (LFilter.Accepts('Unit1.pas'));
+  Assert.IsTrue (LFilter.Accepts('Notes.txt'));
+  Assert.IsFalse(LFilter.Accepts('Unit1_backup.pas'));
+  Assert.IsFalse(LFilter.Accepts('scratch.tmp'));
+end;
+
+procedure TWildCardMatcherDUnitX.FilterExcludeWinsOverIncludeTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // A file matching BOTH lists is rejected - exclude always wins.
+  LFilter := TWildCardFilter.Create(
+    TArray<string>.Create('*.pas'),
+    TArray<string>.Create('*_test*'));
+
+  Assert.IsTrue (LFilter.Accepts('Unit1.pas'));
+  Assert.IsFalse(LFilter.Accepts('Unit1_test.pas'), 'in include AND exclude -> excluded');
+  Assert.IsFalse(LFilter.Accepts('Notes.txt'),      'not included at all');
+end;
+
+procedure TWildCardMatcherDUnitX.FilterSinglePatternOverloadTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  LFilter := TWildCardFilter.Create('*.pas', '*_backup*');
+
+  Assert.IsTrue (LFilter.Accepts('Unit1.pas'));
+  Assert.IsFalse(LFilter.Accepts('Unit1_backup.pas'));
+  Assert.IsFalse(LFilter.Accepts('Notes.txt'));
+
+  // Empty string means "no pattern for that side", not "match empty input".
+  LFilter := TWildCardFilter.Create('', '*.tmp');
+  Assert.IsTrue (LFilter.Accepts('anything.pas'), 'empty include = include everything');
+  Assert.IsFalse(LFilter.Accepts('scratch.tmp'));
+end;
+
+procedure TWildCardMatcherDUnitX.FilterTStringsOverloadWithNilTest;
+var
+  LIncludes: TStringList;
+  LFilter: TWildCardFilter;
+begin
+  LIncludes := TStringList.Create;
+  try
+    LIncludes.Add('*.pas');
+    LIncludes.Add('*.dpr');
+
+    // nil exclude list is tolerated - nothing excluded.
+    LFilter := TWildCardFilter.Create(LIncludes, nil);
+
+    Assert.IsTrue (LFilter.Accepts('Unit1.pas'));
+    Assert.IsFalse(LFilter.Accepts('Notes.txt'));
+
+    // nil include list = everything included.
+    LFilter := TWildCardFilter.Create(nil, LIncludes);
+    Assert.IsFalse(LFilter.Accepts('Unit1.pas'), 'now the same list excludes');
+    Assert.IsTrue (LFilter.Accepts('Notes.txt'));
+  finally
+    LIncludes.Free;
+  end;
+end;
+
+procedure TWildCardMatcherDUnitX.FilterCaseSensitivityTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // Case-insensitive by default - applies to both lists.
+  LFilter := TWildCardFilter.Create(
+    TArray<string>.Create('*.pas'),
+    TArray<string>.Create('*backup*'));
+  Assert.IsTrue (LFilter.Accepts('UNIT1.PAS'));
+  Assert.IsFalse(LFilter.Accepts('UNIT1_BACKUP.PAS'));
+
+  // Case-sensitive: neither list matches on case mismatch.
+  LFilter := TWildCardFilter.Create(
+    TArray<string>.Create('*.pas'),
+    TArray<string>.Create('*backup*'), True);
+  Assert.IsFalse(LFilter.Accepts('UNIT1.PAS'),       'CS include must not match');
+  Assert.IsTrue (LFilter.Accepts('unit1_BACKUP.pas'), 'CS exclude must not match uppercase BACKUP');
+  Assert.IsFalse(LFilter.Accepts('unit1_backup.pas'), 'CS exclude matches exact case');
+end;
+
+procedure TWildCardMatcherDUnitX.FilterQuotedAltPatternsTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // Full pattern syntax works in both lists.
+  LFilter := TWildCardFilter.Create(
+    TArray<string>.Create('*.md'),
+    TArray<string>.Create('*["draft"|"backup"]*'));
+
+  Assert.IsTrue (LFilter.Accepts('docs\notes.md'));
+  Assert.IsFalse(LFilter.Accepts('docs\notes_draft.md'));
+  Assert.IsFalse(LFilter.Accepts('docs\backup_notes.md'));
+  Assert.IsFalse(LFilter.Accepts('docs\notes.txt'));
+end;
+
+procedure TWildCardMatcherDUnitX.FilterDefaultInitialisedRecordAcceptsEverythingTest;
+var
+  LFilter: TWildCardFilter;
+begin
+  // Default(TWildCardFilter) = no patterns anywhere - accepts everything,
+  // case-insensitive.  Mirrors the Default(TWildCard) guarantee.
+  LFilter := Default(TWildCardFilter);
+
+  Assert.IsFalse(LFilter.CaseSensitive);
+  Assert.AreEqual(0, Length(LFilter.IncludePatterns));
+  Assert.AreEqual(0, Length(LFilter.ExcludePatterns));
+  Assert.IsTrue(LFilter.Accepts('anything'));
+  Assert.IsTrue(LFilter.Accepts(''));
 end;
 
 initialization

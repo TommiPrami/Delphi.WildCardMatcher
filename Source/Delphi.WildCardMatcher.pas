@@ -174,6 +174,56 @@ type
     property RegisteredPatterns: TArray<string> read FPatterns;
   end;
 
+  // Include / exclude filter built from two TWildCard matchers.
+  //
+  // An input is accepted when it matches the INCLUDE list AND does not
+  // match the EXCLUDE list, with the usual filtering conventions:
+  //   - empty include list  = everything is included (the include list
+  //     only restricts when it has patterns)
+  //   - empty exclude list  = nothing is excluded
+  //   - both lists empty    = everything is accepted
+  //   - exclude always wins over include
+  //
+  // Patterns are compiled at Create (both lists are registered-pattern
+  // TWildCard instances), so Accepts is cheap to call in a loop:
+  //
+  //   var LFilter := TWildCardFilter.Create(
+  //     ['*.pas', '*.dpr', '*.inc'],                  // filter in
+  //     ['*\__history\*', '*backup*', '*.tmp']);      // filter out
+  //   for var LFile in TDirectory.GetFiles(ARoot) do
+  //     if LFilter.Accepts(LFile) then
+  //       ProcessFile(LFile);
+  //
+  // Case-sensitivity is locked in at Create for BOTH lists and defaults
+  // to case-insensitive (Windows convention).  As with TWildCard, always
+  // initialise through a Create overload or Default(TWildCardFilter) -
+  // the default state accepts everything.
+  TWildCardFilter = record
+  strict private
+    FInclude: TWildCard;
+    FExclude: TWildCard;
+    FHasIncludes: Boolean;
+    FCaseSensitive: Boolean;
+    function GetIncludePatterns: TArray<string>;
+    function GetExcludePatterns: TArray<string>;
+  public
+    class function Create(const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePattern, AExcludePattern: string;
+      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    class function Create(const AIncludePatterns, AExcludePatterns: TArray<string>;
+      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    // TStrings overload tolerates nil for either list (treated as empty).
+    class function Create(const AIncludePatterns, AExcludePatterns: TStrings;
+      const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+
+    // True when AInput passes the include stage and is not excluded.
+    function Accepts(const AInput: string): Boolean;
+
+    property CaseSensitive: Boolean read FCaseSensitive;
+    property IncludePatterns: TArray<string> read GetIncludePatterns;
+    property ExcludePatterns: TArray<string> read GetExcludePatterns;
+  end;
+
 implementation
 
 uses
@@ -1777,6 +1827,85 @@ begin
     Result := MatchRegistered(AInput)
   else
     Result := False;
+end;
+
+{ TWildCardFilter }
+
+class function TWildCardFilter.Create(const ACaseSensitive: Boolean): TWildCardFilter;
+begin
+  Result.FCaseSensitive := ACaseSensitive;
+  Result.FInclude := TWildCard.Create(ACaseSensitive);
+  Result.FExclude := TWildCard.Create(ACaseSensitive);
+  Result.FHasIncludes := False;
+end;
+
+class function TWildCardFilter.Create(const AIncludePattern, AExcludePattern: string;
+  const ACaseSensitive: Boolean): TWildCardFilter;
+begin
+  // Convenience single-pattern form.  An empty string means "no pattern
+  // for that side" (an empty include pattern would otherwise register a
+  // pattern that matches only the empty input - never the intent here).
+  Result.FCaseSensitive := ACaseSensitive;
+
+  if AIncludePattern <> '' then
+    Result.FInclude := TWildCard.Create(AIncludePattern, ACaseSensitive)
+  else
+    Result.FInclude := TWildCard.Create(ACaseSensitive);
+
+  if AExcludePattern <> '' then
+    Result.FExclude := TWildCard.Create(AExcludePattern, ACaseSensitive)
+  else
+    Result.FExclude := TWildCard.Create(ACaseSensitive);
+
+  Result.FHasIncludes := AIncludePattern <> '';
+end;
+
+class function TWildCardFilter.Create(const AIncludePatterns, AExcludePatterns: TArray<string>;
+  const ACaseSensitive: Boolean): TWildCardFilter;
+begin
+  Result.FCaseSensitive := ACaseSensitive;
+  Result.FInclude := TWildCard.Create(AIncludePatterns, ACaseSensitive);
+  Result.FExclude := TWildCard.Create(AExcludePatterns, ACaseSensitive);
+  Result.FHasIncludes := Length(AIncludePatterns) > 0;
+end;
+
+class function TWildCardFilter.Create(const AIncludePatterns, AExcludePatterns: TStrings;
+  const ACaseSensitive: Boolean): TWildCardFilter;
+begin
+  Result.FCaseSensitive := ACaseSensitive;
+
+  if Assigned(AIncludePatterns) then
+    Result.FInclude := TWildCard.Create(AIncludePatterns, ACaseSensitive)
+  else
+    Result.FInclude := TWildCard.Create(ACaseSensitive);
+
+  if Assigned(AExcludePatterns) then
+    Result.FExclude := TWildCard.Create(AExcludePatterns, ACaseSensitive)
+  else
+    Result.FExclude := TWildCard.Create(ACaseSensitive);
+
+  Result.FHasIncludes := Assigned(AIncludePatterns) and (AIncludePatterns.Count > 0);
+end;
+
+function TWildCardFilter.Accepts(const AInput: string): Boolean;
+begin
+  // Include stage: only restricts when there are include patterns.
+  if FHasIncludes and not FInclude.Match(AInput) then
+    Exit(False);
+
+  // Exclude stage: any hit rejects.  Match on an empty registered set
+  // returns False, so an empty exclude list excludes nothing.
+  Result := not FExclude.Match(AInput);
+end;
+
+function TWildCardFilter.GetIncludePatterns: TArray<string>;
+begin
+  Result := FInclude.RegisteredPatterns;
+end;
+
+function TWildCardFilter.GetExcludePatterns: TArray<string>;
+begin
+  Result := FExclude.RegisteredPatterns;
 end;
 
 end.
