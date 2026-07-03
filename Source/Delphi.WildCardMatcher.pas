@@ -151,34 +151,32 @@ type
     // Case-independent helpers
     class function IsAsciiDigit(const AChar: Char): Boolean; static; inline;
     class function FindClassEnd(const APattern: string; const AStart: Integer; var AIsQuotedAlt: Boolean): Integer; static;
-    class function PatternTailIsLiteral(const APattern: string; const APatternIdx: Integer): Boolean; static;
+    class function PatternTailIsLiteral(const APattern: string; const APatternIndex: Integer): Boolean; static;
     // Compiled engine (registered patterns).  The pattern text handed to
     // CompilePattern must already be prepared (upper-cased for CI).
     class procedure AddToken(const AToken: TToken; var ATokens: TArray<TToken>; var ACount: Integer); static;
-    class procedure FlushLiteralToken(const APattern: string; const AEndExclusive, ALitStart: Integer;
-      var ATokens: TArray<TToken>; var ACount: Integer); static;
-    class function ParseClassToken(const APattern: string; var AClassIdx: Integer; var AToken: TToken;
-      const ALen: Integer): Boolean; static;
+    class procedure FlushLiteralToken(const APattern: string; const AEndExclusive, ALitStart: Integer; var ATokens: TArray<TToken>;
+      var ACount: Integer); static;
+    class function ParseClassToken(const APattern: string; var AClassIndex: Integer; var AToken: TToken; const ALen: Integer): Boolean; static;
     class function CompilePattern(const APattern: string): TCompiledPattern; static;
     class function CharInCompiledClass(const AToken: TToken; const AChar: Char): Boolean; static;
-    class function LiteralMatchesAtCI(const AInput: string; const AInputIdx: Integer; const ALit: string): Boolean; static;
-    class function MatchTokensCS(const ATokens: TArray<TToken>; const AInput: string; AInputIdx, ATokenIdx: Integer): Boolean; static;
-    class function MatchTokensCI(const ATokens: TArray<TToken>; const AInput: string; AInputIdx, ATokenIdx: Integer): Boolean; static;
+    class function LiteralMatchesAtCI(const AInput: string; const AInputIndex: Integer; const ALit: string): Boolean; static;
+    class function MatchTokensCS(const ATokens: TArray<TToken>; const AInput: string; AInputIndex, ATokenIndex: Integer): Boolean; static;
+    class function MatchTokensCI(const ATokens: TArray<TToken>; const AInput: string; AInputIndex, ATokenIndex: Integer): Boolean; static;
     function MatchCompiled(const ACompiled: TCompiledPattern; const AInput: string): Boolean;
     // Case-sensitive path (direct ordinal compare, no ToUpper calls)
     class function CharInClassCS(const APattern: string; const AStart, AEnd: Integer; const AChar: Char): Boolean; static;
-    class function AltMatchesAtCS(const AInput: string; const AInputIdx: Integer;
+    class function AltMatchesAtCS(const AInput: string; const AInputIndex: Integer;
       const APattern: string; const AAltStart, AAltLen: Integer): Boolean; static;
     class function MatchQuotedAltClassCS(const AInput, APattern: string;
-      const AInputIdx, AClassStart, AClassEnd: Integer): Boolean; static;
-    class function MatchRecursiveCS(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean; static;
+      const AInputIndex, AClassStart, AClassEnd: Integer): Boolean; static;
+    class function MatchRecursiveCS(const AInput, APattern: string; AInputIndex, APatternIndex: Integer): Boolean; static;
     // Case-insensitive path (ToUpper compare)
     class function CharInClassCI(const APattern: string; const AStart, AEnd: Integer; const AChar: Char): Boolean; static;
-    class function AltMatchesAtCI(const AInput: string; const AInputIdx: Integer;
-      const APattern: string; const AAltStart, AAltLen: Integer): Boolean; static;
-    class function MatchQuotedAltClassCI(const AInput, APattern: string;
-      const AInputIdx, AClassStart, AClassEnd: Integer): Boolean; static;
-    class function MatchRecursiveCI(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean; static;
+    class function AltMatchesAtCI(const AInput: string; const AInputIndex: Integer; const APattern: string; const AAltStart,
+      AAltLen: Integer): Boolean; static;
+    class function MatchQuotedAltClassCI(const AInput, APattern: string; const AInputIndex, AClassStart, AClassEnd: Integer): Boolean; static;
+    class function MatchRecursiveCI(const AInput, APattern: string; AInputIndex, APatternIndex: Integer): Boolean; static;
     // Walks FPatterns and returns True on the first match.  FPatterns are
     // already in the correct form (pre-upper-cased for CI), so no per-call
     // FastUpperString work is needed here.
@@ -292,7 +290,7 @@ end;
 
 function FastUpperString(const AStr: string): string;
 var
-  LIdx, LFirst, LLen: Integer;
+  LIndex, LFirst, LLen: Integer;
   LChar: Char;
 begin
   // Single pass: scan for the first char FastToUpper would change (ASCII
@@ -301,13 +299,13 @@ begin
   LLen := Length(AStr);
   LFirst := 0;
 
-  for LIdx := 1 to LLen do
+  for LIndex := 1 to LLen do
   begin
-    LChar := AStr[LIdx];
+    LChar := AStr[LIndex];
 
     if ((LChar >= 'a') and (LChar <= 'z')) or (Ord(LChar) >= 128) then
     begin
-      LFirst := LIdx;
+      LFirst := LIndex;
       Break;
     end;
   end;
@@ -321,16 +319,16 @@ begin
   if LFirst > 1 then
     Move(AStr[1], Result[1], (LFirst - 1) * SizeOf(Char));
 
-  for LIdx := LFirst to LLen do
+  for LIndex := LFirst to LLen do
   begin
-    LChar := AStr[LIdx];
+    LChar := AStr[LIndex];
 
     if (LChar >= 'a') and (LChar <= 'z') then
-      Result[LIdx] := Chr(Ord(LChar) - 32)
+      Result[LIndex] := Chr(Ord(LChar) - 32)
     else if Ord(LChar) < 128 then
-      Result[LIdx] := LChar
+      Result[LIndex] := LChar
     else
-      Result[LIdx] := LChar.ToUpper;
+      Result[LIndex] := LChar.ToUpper;
   end;
 end;
 
@@ -343,7 +341,7 @@ end;
 // ScanCharIndex: 0-based index of the first occurrence of AChar in
 // AText[0..ACount-1], or -1 when not present.  Exact (case-sensitive)
 // match - the caller can recurse directly on a hit.
-function ScanCharIndex(AText: PChar; ACount: Integer; AChar: Char): Integer;
+function ScanCharIndex(const AText: PChar; const ACount: Integer; const AChar: Char): Integer;
 asm
   // EAX = AText, EDX = ACount, ECX = AChar
   PUSH      EBX
@@ -395,7 +393,7 @@ end;
 // (non-ASCII needs the scalar Unicode ToUpper check - e.g. U+017F upper-
 // cases to 'S', which a two-value compare would miss).  The caller MUST
 // re-verify the candidate with the scalar test before recursing.
-function ScanCharIndexCI(AText: PChar; ACount: Integer; AChars: Cardinal): Integer;
+function ScanCharIndexCI(AText: PChar; const ACount: Integer; const AChars: Cardinal): Integer;
 asm
   // EAX = AText, EDX = ACount, ECX = AChars (low = upper, high = lower)
   PUSH      EBX
@@ -526,17 +524,17 @@ begin
   Result := 0;
 end;
 
-class function TWildCard.PatternTailIsLiteral(const APattern: string; const APatternIdx: Integer): Boolean;
+class function TWildCard.PatternTailIsLiteral(const APattern: string; const APatternIndex: Integer): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
-  // True when the pattern from APatternIdx to the end contains no
+  // True when the pattern from APatternIndex to the end contains no
   // metacharacters, i.e. it is a plain literal suffix.  Lets the '*'
   // handler anchor the compare at the END of the input - the dominant
   // '*.ext' file-mask shape - instead of recursing at every start
   // position.
-  for LIdx := APatternIdx to Length(APattern) do
-    case APattern[LIdx] of
+  for LIndex := APatternIndex to Length(APattern) do
+    case APattern[LIndex] of
       '*', '?', '#', '[':
         Exit(False);
     end;
@@ -587,28 +585,28 @@ begin
     Result := not Result;
 end;
 
-class function TWildCard.AltMatchesAtCS(const AInput: string; const AInputIdx: Integer; const APattern: string; const AAltStart,
+class function TWildCard.AltMatchesAtCS(const AInput: string; const AInputIndex: Integer; const APattern: string; const AAltStart,
   AAltLen: Integer): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   // Empty alternative ('""') matches zero characters - always True.
   if AAltLen = 0 then
     Exit(True);
 
-  if AInputIdx + AAltLen - 1 > Length(AInput) then
+  if AInputIndex + AAltLen - 1 > Length(AInput) then
     Exit(False);
 
-  for LIdx := 0 to AAltLen - 1 do
-    if AInput[AInputIdx + LIdx] <> APattern[AAltStart + LIdx] then
+  for LIndex := 0 to AAltLen - 1 do
+    if AInput[AInputIndex + LIndex] <> APattern[AAltStart + LIndex] then
       Exit(False);
 
   Result := True;
 end;
 
-class function TWildCard.MatchQuotedAltClassCS(const AInput, APattern: string; const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
+class function TWildCard.MatchQuotedAltClassCS(const AInput, APattern: string; const AInputIndex, AClassStart, AClassEnd: Integer): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
   LNegated: Boolean;
   LAfterClass: Integer;
   LAltStart, LAltLen: Integer;
@@ -624,22 +622,22 @@ begin
   // Note: the separator check is done BEFORE attempting to match an alt,
   // so a malformed class (missing '|' between alts, stray garbage) fails
   // unconditionally regardless of what the first alt would have matched.
-  LIdx := AClassStart + 1;
-  LNegated := APattern[LIdx] = '!';
+  LIndex := AClassStart + 1;
+  LNegated := APattern[LIndex] = '!';
 
   if LNegated then
-    Inc(LIdx);
+    Inc(LIndex);
 
   LAfterClass := AClassEnd + 1;
 
   if not LNegated then
   begin
-    while LIdx < AClassEnd do
+    while LIndex < AClassEnd do
     begin
-      if APattern[LIdx] <> '"' then
+      if APattern[LIndex] <> '"' then
         Exit(False);
 
-      LAltStart := LIdx + 1;
+      LAltStart := LIndex + 1;
       LAltContentEnd := LAltStart;
 
       while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
@@ -654,14 +652,14 @@ begin
       if (LAfterAlt < AClassEnd) and (APattern[LAfterAlt] <> '|') then
         Exit(False);
 
-      if AltMatchesAtCS(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
-        if MatchRecursiveCS(AInput, APattern, AInputIdx + LAltLen, LAfterClass) then
+      if AltMatchesAtCS(AInput, AInputIndex, APattern, LAltStart, LAltLen) then
+        if MatchRecursiveCS(AInput, APattern, AInputIndex + LAltLen, LAfterClass) then
           Exit(True);
 
       if LAfterAlt < AClassEnd then
-        LIdx := LAfterAlt + 1
+        LIndex := LAfterAlt + 1
       else
-        LIdx := LAfterAlt;
+        LIndex := LAfterAlt;
     end;
 
     Result := False;
@@ -670,12 +668,12 @@ begin
   begin
     LMaxLen := 0;
 
-    while LIdx < AClassEnd do
+    while LIndex < AClassEnd do
     begin
-      if APattern[LIdx] <> '"' then
+      if APattern[LIndex] <> '"' then
         Exit(False);
 
-      LAltStart := LIdx + 1;
+      LAltStart := LIndex + 1;
       LAltContentEnd := LAltStart;
 
       while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
@@ -696,28 +694,28 @@ begin
       // Any alternative matching as a prefix fails the negation - and a
       // malformed remainder would return False anyway, so bail right away
       // instead of scanning the remaining alternatives.
-      if AltMatchesAtCS(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
+      if AltMatchesAtCS(AInput, AInputIndex, APattern, LAltStart, LAltLen) then
         Exit(False);
 
       if LAfterAlt < AClassEnd then
-        LIdx := LAfterAlt + 1
+        LIndex := LAfterAlt + 1
       else
-        LIdx := LAfterAlt;
+        LIndex := LAfterAlt;
     end;
 
-    if (LMaxLen > 0) and (AInputIdx + LMaxLen - 1 > Length(AInput)) then
+    if (LMaxLen > 0) and (AInputIndex + LMaxLen - 1 > Length(AInput)) then
       Exit(False);
 
-    Result := MatchRecursiveCS(AInput, APattern, AInputIdx + LMaxLen, LAfterClass);
+    Result := MatchRecursiveCS(AInput, APattern, AInputIndex + LMaxLen, LAfterClass);
   end;
 end;
 
-class function TWildCard.MatchRecursiveCS(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean;
+class function TWildCard.MatchRecursiveCS(const AInput, APattern: string; AInputIndex, APatternIndex: Integer): Boolean;
 var
   LClassEnd: Integer;
   LIsQuotedAlt: Boolean;
   LInputLen, LPatternLen: Integer;
-  LTailLen, LTailStart, LIdx: Integer;
+  LTailLen, LTailStart, LIndex: Integer;
   LNextChar: Char;
 {$IF Defined(USE_SSE2) and Defined(WIN32)}
   LRel: Integer;
@@ -726,31 +724,31 @@ begin
   LInputLen := Length(AInput);
   LPatternLen := Length(APattern);
 
-  while APatternIdx <= LPatternLen do
+  while APatternIndex <= LPatternLen do
   begin
-    case APattern[APatternIdx] of
+    case APattern[APatternIndex] of
       '*':
         begin
-          while (APatternIdx <= LPatternLen) and (APattern[APatternIdx] = '*') do
-            Inc(APatternIdx);
+          while (APatternIndex <= LPatternLen) and (APattern[APatternIndex] = '*') do
+            Inc(APatternIndex);
 
-          if APatternIdx > LPatternLen then
+          if APatternIndex > LPatternLen then
             Exit(True);
 
           // Fast path 1: the rest of the pattern is a plain literal - the
           // dominant '*.ext' file-mask shape.  Anchor the compare at the
           // END of the input: one comparison instead of one recursion per
           // start position.
-          if PatternTailIsLiteral(APattern, APatternIdx) then
+          if PatternTailIsLiteral(APattern, APatternIndex) then
           begin
-            LTailLen := LPatternLen - APatternIdx + 1;
+            LTailLen := LPatternLen - APatternIndex + 1;
             LTailStart := LInputLen - LTailLen + 1;
 
-            if LTailStart < AInputIdx then
+            if LTailStart < AInputIndex then
               Exit(False);
 
-            for LIdx := 0 to LTailLen - 1 do
-              if AInput[LTailStart + LIdx] <> APattern[APatternIdx + LIdx] then
+            for LIndex := 0 to LTailLen - 1 do
+              if AInput[LTailStart + LIndex] <> APattern[APatternIndex + LIndex] then
                 Exit(False);
 
             Exit(True);
@@ -759,30 +757,30 @@ begin
           // Fast path 2: only recurse at input positions where the token
           // right after the '*' can actually match, instead of at every
           // position.
-          LNextChar := APattern[APatternIdx];
+          LNextChar := APattern[APatternIndex];
 
           case LNextChar of
             '?':
               begin
                 // '?' consumes one char, so any position with input left
                 // is a candidate - but end-of-input is not.
-                while AInputIdx <= LInputLen do
+                while AInputIndex <= LInputLen do
                 begin
-                  if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
+                  if MatchRecursiveCS(AInput, APattern, AInputIndex, APatternIndex) then
                     Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
             '#':
               begin
-                while AInputIdx <= LInputLen do
+                while AInputIndex <= LInputLen do
                 begin
-                  if IsAsciiDigit(AInput[AInputIdx]) then
-                    if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
+                  if IsAsciiDigit(AInput[AInputIndex]) then
+                    if MatchRecursiveCS(AInput, APattern, AInputIndex, APatternIndex) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
             '[':
@@ -790,38 +788,38 @@ begin
                 // Classes need full evaluation - and a quoted-alt class
                 // with an empty alternative can match zero chars - so try
                 // every position INCLUDING the end-of-input one.
-                while AInputIdx <= LInputLen + 1 do
+                while AInputIndex <= LInputLen + 1 do
                 begin
-                  if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
+                  if MatchRecursiveCS(AInput, APattern, AInputIndex, APatternIndex) then
                     Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
           else
             // Plain literal - skip straight to positions where it occurs.
 {$IF Defined(USE_SSE2) and Defined(WIN32)}
-            while AInputIdx <= LInputLen do
+            while AInputIndex <= LInputLen do
             begin
-              LRel := ScanCharIndex(PChar(Pointer(AInput)) + AInputIdx - 1, LInputLen - AInputIdx + 1, LNextChar);
+              LRel := ScanCharIndex(PChar(Pointer(AInput)) + AInputIndex - 1, LInputLen - AInputIndex + 1, LNextChar);
               if LRel < 0 then
                 Break;
 
-              Inc(AInputIdx, LRel);
+              Inc(AInputIndex, LRel);
 
-              if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
+              if MatchRecursiveCS(AInput, APattern, AInputIndex, APatternIndex) then
                 Exit(True);
 
-              Inc(AInputIdx);
+              Inc(AInputIndex);
             end;
 {$ELSE}
-            while AInputIdx <= LInputLen do
+            while AInputIndex <= LInputLen do
             begin
-              if AInput[AInputIdx] = LNextChar then
-                if MatchRecursiveCS(AInput, APattern, AInputIdx, APatternIdx) then
+              if AInput[AInputIndex] = LNextChar then
+                if MatchRecursiveCS(AInput, APattern, AInputIndex, APatternIndex) then
                   Exit(True);
 
-              Inc(AInputIdx);
+              Inc(AInputIndex);
             end;
 {$ENDIF}
           end;
@@ -830,56 +828,56 @@ begin
         end;
       '?':
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(APatternIdx);
+          Inc(AInputIndex);
+          Inc(APatternIndex);
         end;
       '#':
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          if not IsAsciiDigit(AInput[AInputIdx]) then
+          if not IsAsciiDigit(AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(APatternIdx);
+          Inc(AInputIndex);
+          Inc(APatternIndex);
         end;
       '[':
         begin
-          LClassEnd := FindClassEnd(APattern, APatternIdx, LIsQuotedAlt);
+          LClassEnd := FindClassEnd(APattern, APatternIndex, LIsQuotedAlt);
           if LClassEnd = 0 then
             Exit(False);
 
           if LIsQuotedAlt then
-            Exit(MatchQuotedAltClassCS(AInput, APattern, AInputIdx, APatternIdx, LClassEnd));
+            Exit(MatchQuotedAltClassCS(AInput, APattern, AInputIndex, APatternIndex, LClassEnd));
 
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          if not CharInClassCS(APattern, APatternIdx, LClassEnd, AInput[AInputIdx]) then
+          if not CharInClassCS(APattern, APatternIndex, LClassEnd, AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          APatternIdx := LClassEnd + 1;
+          Inc(AInputIndex);
+          APatternIndex := LClassEnd + 1;
         end;
     else
       begin
-        if AInputIdx > LInputLen then
+        if AInputIndex > LInputLen then
           Exit(False);
 
-        if AInput[AInputIdx] <> APattern[APatternIdx] then
+        if AInput[AInputIndex] <> APattern[APatternIndex] then
           Exit(False);
 
-        Inc(AInputIdx);
-        Inc(APatternIdx);
+        Inc(AInputIndex);
+        Inc(APatternIndex);
       end;
     end;
   end;
 
-  Result := AInputIdx > LInputLen;
+  Result := AInputIndex > LInputLen;
 end;
 
 { TWildCard - case-insensitive path }
@@ -928,10 +926,10 @@ begin
     Result := not Result;
 end;
 
-class function TWildCard.AltMatchesAtCI(const AInput: string; const AInputIdx: Integer; const APattern: string; const AAltStart,
+class function TWildCard.AltMatchesAtCI(const AInput: string; const AInputIndex: Integer; const APattern: string; const AAltStart,
   AAltLen: Integer): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   // Pattern alt content is pre-upper-cased by the public Match dispatcher,
   // so only the input side needs FastToUpper here - and only when the
@@ -939,19 +937,19 @@ begin
   if AAltLen = 0 then
     Exit(True);
 
-  if AInputIdx + AAltLen - 1 > Length(AInput) then
+  if AInputIndex + AAltLen - 1 > Length(AInput) then
     Exit(False);
 
-  for LIdx := 0 to AAltLen - 1 do
-    if (AInput[AInputIdx + LIdx] <> APattern[AAltStart + LIdx]) and (FastToUpper(AInput[AInputIdx + LIdx]) <> APattern[AAltStart + LIdx]) then
+  for LIndex := 0 to AAltLen - 1 do
+    if (AInput[AInputIndex + LIndex] <> APattern[AAltStart + LIndex]) and (FastToUpper(AInput[AInputIndex + LIndex]) <> APattern[AAltStart + LIndex]) then
       Exit(False);
 
   Result := True;
 end;
 
-class function TWildCard.MatchQuotedAltClassCI(const AInput, APattern: string; const AInputIdx, AClassStart, AClassEnd: Integer): Boolean;
+class function TWildCard.MatchQuotedAltClassCI(const AInput, APattern: string; const AInputIndex, AClassStart, AClassEnd: Integer): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
   LNegated: Boolean;
   LAfterClass: Integer;
   LAltStart, LAltLen: Integer;
@@ -961,22 +959,22 @@ var
 begin
   // See the CS variant for the matching/validation rules - the only
   // difference is the per-character upper-casing on the input side.
-  LIdx := AClassStart + 1;
-  LNegated := APattern[LIdx] = '!';
+  LIndex := AClassStart + 1;
+  LNegated := APattern[LIndex] = '!';
 
   if LNegated then
-    Inc(LIdx);
+    Inc(LIndex);
 
   LAfterClass := AClassEnd + 1;
 
   if not LNegated then
   begin
-    while LIdx < AClassEnd do
+    while LIndex < AClassEnd do
     begin
-      if APattern[LIdx] <> '"' then
+      if APattern[LIndex] <> '"' then
         Exit(False);
 
-      LAltStart := LIdx + 1;
+      LAltStart := LIndex + 1;
       LAltContentEnd := LAltStart;
 
       while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
@@ -991,14 +989,14 @@ begin
       if (LAfterAlt < AClassEnd) and (APattern[LAfterAlt] <> '|') then
         Exit(False);
 
-      if AltMatchesAtCI(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
-        if MatchRecursiveCI(AInput, APattern, AInputIdx + LAltLen, LAfterClass) then
+      if AltMatchesAtCI(AInput, AInputIndex, APattern, LAltStart, LAltLen) then
+        if MatchRecursiveCI(AInput, APattern, AInputIndex + LAltLen, LAfterClass) then
           Exit(True);
 
       if LAfterAlt < AClassEnd then
-        LIdx := LAfterAlt + 1
+        LIndex := LAfterAlt + 1
       else
-        LIdx := LAfterAlt;
+        LIndex := LAfterAlt;
     end;
 
     Result := False;
@@ -1007,12 +1005,12 @@ begin
   begin
     LMaxLen := 0;
 
-    while LIdx < AClassEnd do
+    while LIndex < AClassEnd do
     begin
-      if APattern[LIdx] <> '"' then
+      if APattern[LIndex] <> '"' then
         Exit(False);
 
-      LAltStart := LIdx + 1;
+      LAltStart := LIndex + 1;
       LAltContentEnd := LAltStart;
 
       while (LAltContentEnd < AClassEnd) and (APattern[LAltContentEnd] <> '"') do
@@ -1033,28 +1031,28 @@ begin
       // Any alternative matching as a prefix fails the negation - and a
       // malformed remainder would return False anyway, so bail right away
       // instead of scanning the remaining alternatives.
-      if AltMatchesAtCI(AInput, AInputIdx, APattern, LAltStart, LAltLen) then
+      if AltMatchesAtCI(AInput, AInputIndex, APattern, LAltStart, LAltLen) then
         Exit(False);
 
       if LAfterAlt < AClassEnd then
-        LIdx := LAfterAlt + 1
+        LIndex := LAfterAlt + 1
       else
-        LIdx := LAfterAlt;
+        LIndex := LAfterAlt;
     end;
 
-    if (LMaxLen > 0) and (AInputIdx + LMaxLen - 1 > Length(AInput)) then
+    if (LMaxLen > 0) and (AInputIndex + LMaxLen - 1 > Length(AInput)) then
       Exit(False);
 
-    Result := MatchRecursiveCI(AInput, APattern, AInputIdx + LMaxLen, LAfterClass);
+    Result := MatchRecursiveCI(AInput, APattern, AInputIndex + LMaxLen, LAfterClass);
   end;
 end;
 
-class function TWildCard.MatchRecursiveCI(const AInput, APattern: string; AInputIdx, APatternIdx: Integer): Boolean;
+class function TWildCard.MatchRecursiveCI(const AInput, APattern: string; AInputIndex, APatternIndex: Integer): Boolean;
 var
   LClassEnd: Integer;
   LIsQuotedAlt: Boolean;
   LInputLen, LPatternLen: Integer;
-  LTailLen, LTailStart, LIdx: Integer;
+  LTailLen, LTailStart, LIndex: Integer;
   LNextChar: Char;
 {$IF Defined(USE_SSE2) and Defined(WIN32)}
   LRel: Integer;
@@ -1064,15 +1062,15 @@ begin
   LInputLen := Length(AInput);
   LPatternLen := Length(APattern);
 
-  while APatternIdx <= LPatternLen do
+  while APatternIndex <= LPatternLen do
   begin
-    case APattern[APatternIdx] of
+    case APattern[APatternIndex] of
       '*':
         begin
-          while (APatternIdx <= LPatternLen) and (APattern[APatternIdx] = '*') do
-            Inc(APatternIdx);
+          while (APatternIndex <= LPatternLen) and (APattern[APatternIndex] = '*') do
+            Inc(APatternIndex);
 
-          if APatternIdx > LPatternLen then
+          if APatternIndex > LPatternLen then
             Exit(True);
 
           // Fast path 1: the rest of the pattern is a plain literal - the
@@ -1080,16 +1078,16 @@ begin
           // END of the input: one comparison instead of one recursion per
           // start position.  Direct-equality precheck skips FastToUpper
           // for uppercase input and non-letters (dots, digits, '\').
-          if PatternTailIsLiteral(APattern, APatternIdx) then
+          if PatternTailIsLiteral(APattern, APatternIndex) then
           begin
-            LTailLen := LPatternLen - APatternIdx + 1;
+            LTailLen := LPatternLen - APatternIndex + 1;
             LTailStart := LInputLen - LTailLen + 1;
 
-            if LTailStart < AInputIdx then
+            if LTailStart < AInputIndex then
               Exit(False);
 
-            for LIdx := 0 to LTailLen - 1 do
-              if (AInput[LTailStart + LIdx] <> APattern[APatternIdx + LIdx]) and (FastToUpper(AInput[LTailStart + LIdx]) <> APattern[APatternIdx + LIdx]) then
+            for LIndex := 0 to LTailLen - 1 do
+              if (AInput[LTailStart + LIndex] <> APattern[APatternIndex + LIndex]) and (FastToUpper(AInput[LTailStart + LIndex]) <> APattern[APatternIndex + LIndex]) then
                 Exit(False);
 
             Exit(True);
@@ -1098,30 +1096,30 @@ begin
           // Fast path 2: only recurse at input positions where the token
           // right after the '*' can actually match, instead of at every
           // position.
-          LNextChar := APattern[APatternIdx];
+          LNextChar := APattern[APatternIndex];
 
           case LNextChar of
             '?':
               begin
                 // '?' consumes one char, so any position with input left
                 // is a candidate - but end-of-input is not.
-                while AInputIdx <= LInputLen do
+                while AInputIndex <= LInputLen do
                 begin
-                  if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
+                  if MatchRecursiveCI(AInput, APattern, AInputIndex, APatternIndex) then
                     Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
             '#':
               begin
-                while AInputIdx <= LInputLen do
+                while AInputIndex <= LInputLen do
                 begin
-                  if IsAsciiDigit(AInput[AInputIdx]) then
-                    if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
+                  if IsAsciiDigit(AInput[AInputIndex]) then
+                    if MatchRecursiveCI(AInput, APattern, AInputIndex, APatternIndex) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
             '[':
@@ -1129,12 +1127,12 @@ begin
                 // Classes need full evaluation - and a quoted-alt class
                 // with an empty alternative can match zero chars - so try
                 // every position INCLUDING the end-of-input one.
-                while AInputIdx <= LInputLen + 1 do
+                while AInputIndex <= LInputLen + 1 do
                 begin
-                  if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
+                  if MatchRecursiveCI(AInput, APattern, AInputIndex, APatternIndex) then
                     Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
           else
@@ -1146,30 +1144,30 @@ begin
             else
               LCharPair := Cardinal(Ord(LNextChar)) or (Cardinal(Ord(LNextChar)) shl 16);
 
-            while AInputIdx <= LInputLen do
+            while AInputIndex <= LInputLen do
             begin
-              LRel := ScanCharIndexCI(PChar(Pointer(AInput)) + AInputIdx - 1, LInputLen - AInputIdx + 1, LCharPair);
+              LRel := ScanCharIndexCI(PChar(Pointer(AInput)) + AInputIndex - 1, LInputLen - AInputIndex + 1, LCharPair);
               if LRel < 0 then
                 Break;
 
-              Inc(AInputIdx, LRel);
+              Inc(AInputIndex, LRel);
 
               // Candidates include non-ASCII chars - re-verify before
               // recursing (see ScanCharIndexCI).
-              if (AInput[AInputIdx] = LNextChar) or (FastToUpper(AInput[AInputIdx]) = LNextChar) then
-                if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
+              if (AInput[AInputIndex] = LNextChar) or (FastToUpper(AInput[AInputIndex]) = LNextChar) then
+                if MatchRecursiveCI(AInput, APattern, AInputIndex, APatternIndex) then
                   Exit(True);
 
-              Inc(AInputIdx);
+              Inc(AInputIndex);
             end;
 {$ELSE}
-            while AInputIdx <= LInputLen do
+            while AInputIndex <= LInputLen do
             begin
-              if (AInput[AInputIdx] = LNextChar) or (FastToUpper(AInput[AInputIdx]) = LNextChar) then
-                if MatchRecursiveCI(AInput, APattern, AInputIdx, APatternIdx) then
+              if (AInput[AInputIndex] = LNextChar) or (FastToUpper(AInput[AInputIndex]) = LNextChar) then
+                if MatchRecursiveCI(AInput, APattern, AInputIndex, APatternIndex) then
                   Exit(True);
 
-              Inc(AInputIdx);
+              Inc(AInputIndex);
             end;
 {$ENDIF}
           end;
@@ -1178,60 +1176,60 @@ begin
         end;
       '?':
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(APatternIdx);
+          Inc(AInputIndex);
+          Inc(APatternIndex);
         end;
       '#':
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          if not IsAsciiDigit(AInput[AInputIdx]) then
+          if not IsAsciiDigit(AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(APatternIdx);
+          Inc(AInputIndex);
+          Inc(APatternIndex);
         end;
       '[':
         begin
-          LClassEnd := FindClassEnd(APattern, APatternIdx, LIsQuotedAlt);
+          LClassEnd := FindClassEnd(APattern, APatternIndex, LIsQuotedAlt);
           if LClassEnd = 0 then
             Exit(False);
 
           if LIsQuotedAlt then
-            Exit(MatchQuotedAltClassCI(AInput, APattern, AInputIdx, APatternIdx, LClassEnd));
+            Exit(MatchQuotedAltClassCI(AInput, APattern, AInputIndex, APatternIndex, LClassEnd));
 
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          if not CharInClassCI(APattern, APatternIdx, LClassEnd, AInput[AInputIdx]) then
+          if not CharInClassCI(APattern, APatternIndex, LClassEnd, AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          APatternIdx := LClassEnd + 1;
+          Inc(AInputIndex);
+          APatternIndex := LClassEnd + 1;
         end;
     else
       begin
-        if AInputIdx > LInputLen then
+        if AInputIndex > LInputLen then
           Exit(False);
 
         // Pattern is pre-upper-cased; only upper-case the input side, and
         // only when the direct ordinal compare misses - uppercase input
         // and non-letters (dots, digits, path separators) hit the first
         // test and skip FastToUpper entirely.
-        if (AInput[AInputIdx] <> APattern[APatternIdx]) and (FastToUpper(AInput[AInputIdx]) <> APattern[APatternIdx]) then
+        if (AInput[AInputIndex] <> APattern[APatternIndex]) and (FastToUpper(AInput[AInputIndex]) <> APattern[APatternIndex]) then
           Exit(False);
 
-        Inc(AInputIdx);
-        Inc(APatternIdx);
+        Inc(AInputIndex);
+        Inc(APatternIndex);
       end;
     end;
   end;
 
-  Result := AInputIdx > LInputLen;
+  Result := AInputIndex > LInputLen;
 end;
 
 { TWildCard - compiled engine (registered patterns) }
@@ -1245,8 +1243,8 @@ begin
   Inc(ACount);
 end;
 
-class procedure TWildCard.FlushLiteralToken(const APattern: string; const AEndExclusive, ALitStart: Integer;
-  var ATokens: TArray<TToken>; var ACount: Integer);
+class procedure TWildCard.FlushLiteralToken(const APattern: string; const AEndExclusive, ALitStart: Integer; var ATokens: TArray<TToken>;
+  var ACount: Integer);
 var
   LLitTok: TToken;
 begin
@@ -1260,12 +1258,11 @@ begin
   end;
 end;
 
-// AClassIdx is at '[' on entry; on success it is moved past the closing
+// AClassIndex is at '[' on entry; on success it is moved past the closing
 // ']'.  Mirrors the interpreting engine's FindClassEnd + CharInClass* +
 // MatchQuotedAltClass* parsing rules exactly - the two engines MUST stay
 // in agreement (the benchmark app has a parity suite that checks this).
-class function TWildCard.ParseClassToken(const APattern: string; var AClassIdx: Integer; var AToken: TToken;
-  const ALen: Integer): Boolean;
+class function TWildCard.ParseClassToken(const APattern: string; var AClassIndex: Integer; var AToken: TToken; const ALen: Integer): Boolean;
 var
   LPos, LContentStart, LContentEnd, LQStart: Integer;
   LAltCount: Integer;
@@ -1273,7 +1270,7 @@ var
 begin
   AToken := Default(TToken);
 
-  LPos := AClassIdx + 1;
+  LPos := AClassIndex + 1;
 
   if (LPos <= ALen) and (APattern[LPos] = '!') then
   begin
@@ -1339,7 +1336,7 @@ begin
     if LAltCount = 0 then
       Exit(False);
 
-    AClassIdx := LPos + 1;
+    AClassIndex := LPos + 1;
     Exit(True);
   end;
 
@@ -1381,13 +1378,13 @@ begin
     end;
   end;
 
-  AClassIdx := LContentEnd + 1;
+  AClassIndex := LContentEnd + 1;
   Result := True;
 end;
 
 class function TWildCard.CompilePattern(const APattern: string): TCompiledPattern;
 var
-  LLen, LIdx, LLitStart: Integer;
+  LLen, LIndex, LLitStart: Integer;
   LTokens: TArray<TToken>;
   LCount: Integer;
   LTok: TToken;
@@ -1399,52 +1396,52 @@ begin
   LLen := Length(APattern);
   LTokens := nil;
   LCount := 0;
-  LIdx := 1;
+  LIndex := 1;
   LLitStart := 1;
 
-  while LIdx <= LLen do
+  while LIndex <= LLen do
   begin
-    case APattern[LIdx] of
+    case APattern[LIndex] of
       '*':
         begin
-          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIndex, LLitStart, LTokens, LCount);
 
-          while (LIdx <= LLen) and (APattern[LIdx] = '*') do
-            Inc(LIdx);
+          while (LIndex <= LLen) and (APattern[LIndex] = '*') do
+            Inc(LIndex);
 
           LTok := Default(TToken);
           LTok.Kind := tkStar;
           AddToken(LTok, LTokens, LCount);
 
-          LLitStart := LIdx;
+          LLitStart := LIndex;
         end;
       '?':
         begin
-          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIndex, LLitStart, LTokens, LCount);
 
           LTok := Default(TToken);
           LTok.Kind := tkAnyChar;
           AddToken(LTok, LTokens, LCount);
 
-          Inc(LIdx);
-          LLitStart := LIdx;
+          Inc(LIndex);
+          LLitStart := LIndex;
         end;
       '#':
         begin
-          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIndex, LLitStart, LTokens, LCount);
 
           LTok := Default(TToken);
           LTok.Kind := tkDigit;
           AddToken(LTok, LTokens, LCount);
 
-          Inc(LIdx);
-          LLitStart := LIdx;
+          Inc(LIndex);
+          LLitStart := LIndex;
         end;
       '[':
         begin
-          FlushLiteralToken(APattern, LIdx, LLitStart, LTokens, LCount);
+          FlushLiteralToken(APattern, LIndex, LLitStart, LTokens, LCount);
 
-          if not ParseClassToken(APattern, LIdx, LTok, LLen) then
+          if not ParseClassToken(APattern, LIndex, LTok, LLen) then
           begin
             // Malformed class - the pattern can never match anything
             // (same behaviour as the interpreting engine).
@@ -1453,10 +1450,10 @@ begin
           end;
 
           AddToken(LTok, LTokens, LCount);
-          LLitStart := LIdx;
+          LLitStart := LIndex;
         end;
     else
-      Inc(LIdx);
+      Inc(LIndex);
     end;
   end;
 
@@ -1468,23 +1465,20 @@ begin
   // inputs before the engine even starts.
   LMin := 0;
 
-  for LIdx := LCount - 1 downto 0 do
+  for LIndex := LCount - 1 downto 0 do
   begin
-    case LTokens[LIdx].Kind of
-      tkLiteral:
-        Inc(LMin, Length(LTokens[LIdx].Lit));
-      tkAnyChar, tkDigit, tkCharClass:
-        Inc(LMin);
-      tkStar:
-        ; // consumes zero at minimum
+    case LTokens[LIndex].Kind of
+      tkLiteral: Inc(LMin, Length(LTokens[LIndex].Lit));
+      tkAnyChar, tkDigit, tkCharClass: Inc(LMin);
+      tkStar: ; // consumes zero at minimum
       tkAltGroup:
-        if LTokens[LIdx].Negate then
-          Inc(LMin, LTokens[LIdx].MaxAltLen)
+        if LTokens[LIndex].Negate then
+          Inc(LMin, LTokens[LIndex].MaxAltLen)
         else
-          Inc(LMin, LTokens[LIdx].MinAltLen);
+          Inc(LMin, LTokens[LIndex].MinAltLen);
     end;
 
-    LTokens[LIdx].MinRemain := LMin;
+    LTokens[LIndex].MinRemain := LMin;
   end;
 
   Result.Tokens := LTokens;
@@ -1492,20 +1486,20 @@ end;
 
 class function TWildCard.CharInCompiledClass(const AToken: TToken; const AChar: Char): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   Result := False;
 
-  for LIdx := 1 to Length(AToken.Singles) do
-    if AChar = AToken.Singles[LIdx] then
+  for LIndex := 1 to Length(AToken.Singles) do
+    if AChar = AToken.Singles[LIndex] then
     begin
       Result := True;
       Break;
     end;
 
   if not Result then
-    for LIdx := 0 to High(AToken.Ranges) do
-      if (AChar >= AToken.Ranges[LIdx].Lo) and (AChar <= AToken.Ranges[LIdx].Hi) then
+    for LIndex := 0 to High(AToken.Ranges) do
+      if (AChar >= AToken.Ranges[LIndex].Lo) and (AChar <= AToken.Ranges[LIndex].Hi) then
       begin
         Result := True;
         Break;
@@ -1518,23 +1512,23 @@ end;
 // Case-insensitive literal-run compare: pattern side (ALit) is already
 // upper-cased at Create time; the input side gets the ordinal pre-check +
 // FastToUpper treatment per char.  Bounds are the caller's responsibility.
-class function TWildCard.LiteralMatchesAtCI(const AInput: string; const AInputIdx: Integer; const ALit: string): Boolean;
+class function TWildCard.LiteralMatchesAtCI(const AInput: string; const AInputIndex: Integer; const ALit: string): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
-  for LIdx := 1 to Length(ALit) do
-    if (AInput[AInputIdx + LIdx - 1] <> ALit[LIdx]) and (FastToUpper(AInput[AInputIdx + LIdx - 1]) <> ALit[LIdx]) then
+  for LIndex := 1 to Length(ALit) do
+    if (AInput[AInputIndex + LIndex - 1] <> ALit[LIndex]) and (FastToUpper(AInput[AInputIndex + LIndex - 1]) <> ALit[LIndex]) then
       Exit(False);
 
   Result := True;
 end;
 
-class function TWildCard.MatchTokensCS(const ATokens: TArray<TToken>; const AInput: string; AInputIdx, ATokenIdx: Integer): Boolean;
+class function TWildCard.MatchTokensCS(const ATokens: TArray<TToken>; const AInput: string; AInputIndex, ATokenIndex: Integer): Boolean;
 var
   LInputLen: Integer;
   LTok, LNext: PToken;
-  LLitLen, LIdx, LMaxStart: Integer;
-  LAltIdx, LAltLen: Integer;
+  LLitLen, LIndex, LMaxStart: Integer;
+  LAltIndex, LAltLen: Integer;
   LChar: Char;
 {$IF Defined(USE_SSE2) and Defined(WIN32)}
   LRel: Integer;
@@ -1542,50 +1536,50 @@ var
 begin
   LInputLen := Length(AInput);
 
-  while ATokenIdx <= High(ATokens) do
+  while ATokenIndex <= High(ATokens) do
   begin
-    LTok := @ATokens[ATokenIdx];
+    LTok := @ATokens[ATokenIndex];
 
     case LTok.Kind of
       tkLiteral:
         begin
           LLitLen := Length(LTok.Lit);
 
-          if AInputIdx + LLitLen - 1 > LInputLen then
+          if AInputIndex + LLitLen - 1 > LInputLen then
             Exit(False);
 
-          if not CompareMem(@AInput[AInputIdx], Pointer(LTok.Lit), LLitLen * SizeOf(Char)) then
+          if not CompareMem(@AInput[AInputIndex], Pointer(LTok.Lit), LLitLen * SizeOf(Char)) then
             Exit(False);
 
-          Inc(AInputIdx, LLitLen);
-          Inc(ATokenIdx);
+          Inc(AInputIndex, LLitLen);
+          Inc(ATokenIndex);
         end;
       tkAnyChar:
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(ATokenIdx);
+          Inc(AInputIndex);
+          Inc(ATokenIndex);
         end;
       tkDigit:
         begin
-          if (AInputIdx > LInputLen) or not IsAsciiDigit(AInput[AInputIdx]) then
+          if (AInputIndex > LInputLen) or not IsAsciiDigit(AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(ATokenIdx);
+          Inc(AInputIndex);
+          Inc(ATokenIndex);
         end;
       tkCharClass:
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          if not CharInCompiledClass(LTok^, AInput[AInputIdx]) then
+          if not CharInCompiledClass(LTok^, AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(ATokenIdx);
+          Inc(AInputIndex);
+          Inc(ATokenIndex);
         end;
       tkAltGroup:
         begin
@@ -1593,34 +1587,34 @@ begin
           begin
             // None of the alternatives may be a prefix here; consume the
             // longest alternative's length on success.
-            for LAltIdx := 0 to High(LTok.Alts) do
+            for LAltIndex := 0 to High(LTok.Alts) do
             begin
-              LAltLen := Length(LTok.Alts[LAltIdx]);
+              LAltLen := Length(LTok.Alts[LAltIndex]);
 
               if (LAltLen = 0) or
-                 ((AInputIdx + LAltLen - 1 <= LInputLen) and
-                  CompareMem(@AInput[AInputIdx], Pointer(LTok.Alts[LAltIdx]), LAltLen * SizeOf(Char))) then
+                 ((AInputIndex + LAltLen - 1 <= LInputLen) and
+                  CompareMem(@AInput[AInputIndex], Pointer(LTok.Alts[LAltIndex]), LAltLen * SizeOf(Char))) then
                 Exit(False);
             end;
 
-            if (LTok.MaxAltLen > 0) and (AInputIdx + LTok.MaxAltLen - 1 > LInputLen) then
+            if (LTok.MaxAltLen > 0) and (AInputIndex + LTok.MaxAltLen - 1 > LInputLen) then
               Exit(False);
 
-            Inc(AInputIdx, LTok.MaxAltLen);
-            Inc(ATokenIdx);
+            Inc(AInputIndex, LTok.MaxAltLen);
+            Inc(ATokenIndex);
           end
           else
           begin
             // Alternatives differ in length, so each candidate needs its
             // own continuation attempt.
-            for LAltIdx := 0 to High(LTok.Alts) do
+            for LAltIndex := 0 to High(LTok.Alts) do
             begin
-              LAltLen := Length(LTok.Alts[LAltIdx]);
+              LAltLen := Length(LTok.Alts[LAltIndex]);
 
               if (LAltLen = 0) or
-                ((AInputIdx + LAltLen - 1 <= LInputLen) and
-                CompareMem(@AInput[AInputIdx], Pointer(LTok.Alts[LAltIdx]), LAltLen * SizeOf(Char))) then
-                if MatchTokensCS(ATokens, AInput, AInputIdx + LAltLen, ATokenIdx + 1) then
+                ((AInputIndex + LAltLen - 1 <= LInputLen) and
+                CompareMem(@AInput[AInputIndex], Pointer(LTok.Alts[LAltIndex]), LAltLen * SizeOf(Char))) then
+                if MatchTokensCS(ATokens, AInput, AInputIndex + LAltLen, ATokenIndex + 1) then
                   Exit(True);
             end;
 
@@ -1629,10 +1623,10 @@ begin
         end;
       tkStar:
         begin
-          if ATokenIdx = High(ATokens) then
+          if ATokenIndex = High(ATokens) then
             Exit(True); // trailing '*' absorbs the rest
 
-          LNext := @ATokens[ATokenIdx + 1];
+          LNext := @ATokens[ATokenIndex + 1];
 
           // Prune: positions past LMaxStart cannot fit the remainder.
           LMaxStart := LInputLen - LNext.MinRemain + 1;
@@ -1643,75 +1637,75 @@ begin
                 LLitLen := Length(LNext.Lit);
 
                 // Tail anchor: '*literal' at the very end of the pattern.
-                if ATokenIdx + 1 = High(ATokens) then
+                if ATokenIndex + 1 = High(ATokens) then
                 begin
-                  LIdx := LInputLen - LLitLen + 1;
+                  LIndex := LInputLen - LLitLen + 1;
 
-                  if LIdx < AInputIdx then
+                  if LIndex < AInputIndex then
                     Exit(False);
 
-                  Exit(CompareMem(@AInput[LIdx], Pointer(LNext.Lit), LLitLen * SizeOf(Char)));
+                  Exit(CompareMem(@AInput[LIndex], Pointer(LNext.Lit), LLitLen * SizeOf(Char)));
                 end;
 
                 // First-char skip: only recurse where the literal starts.
                 LChar := LNext.Lit[1];
 
 {$IF Defined(USE_SSE2) and Defined(WIN32)}
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  LRel := ScanCharIndex(PChar(Pointer(AInput)) + AInputIdx - 1, LMaxStart - AInputIdx + 1, LChar);
+                  LRel := ScanCharIndex(PChar(Pointer(AInput)) + AInputIndex - 1, LMaxStart - AInputIndex + 1, LChar);
                   if LRel < 0 then
                     Break;
 
-                  Inc(AInputIdx, LRel);
+                  Inc(AInputIndex, LRel);
 
-                  if MatchTokensCS(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if MatchTokensCS(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                     Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
 {$ELSE}
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  if AInput[AInputIdx] = LChar then
-                    if MatchTokensCS(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if AInput[AInputIndex] = LChar then
+                    if MatchTokensCS(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
 {$ENDIF}
               end;
             tkDigit:
               begin
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  if IsAsciiDigit(AInput[AInputIdx]) then
-                    if MatchTokensCS(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if IsAsciiDigit(AInput[AInputIndex]) then
+                    if MatchTokensCS(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
             tkCharClass:
               begin
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  if CharInCompiledClass(LNext^, AInput[AInputIdx]) then
-                    if MatchTokensCS(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if CharInCompiledClass(LNext^, AInput[AInputIndex]) then
+                    if MatchTokensCS(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
           else
             // tkAnyChar / tkAltGroup: no cheap per-position filter, but
             // the MinRemain prune still bounds the scan.
-            while AInputIdx <= LMaxStart do
+            while AInputIndex <= LMaxStart do
             begin
-              if MatchTokensCS(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+              if MatchTokensCS(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                 Exit(True);
 
-              Inc(AInputIdx);
+              Inc(AInputIndex);
             end;
           end;
 
@@ -1720,15 +1714,15 @@ begin
     end;
   end;
 
-  Result := AInputIdx > LInputLen;
+  Result := AInputIndex > LInputLen;
 end;
 
-class function TWildCard.MatchTokensCI(const ATokens: TArray<TToken>; const AInput: string; AInputIdx, ATokenIdx: Integer): Boolean;
+class function TWildCard.MatchTokensCI(const ATokens: TArray<TToken>; const AInput: string; AInputIndex, ATokenIndex: Integer): Boolean;
 var
   LInputLen: Integer;
   LTok, LNext: PToken;
-  LLitLen, LIdx, LMaxStart: Integer;
-  LAltIdx, LAltLen: Integer;
+  LLitLen, LIndex, LMaxStart: Integer;
+  LAltIndex, LAltLen: Integer;
   LChar: Char;
 {$IF Defined(USE_SSE2) and Defined(WIN32)}
   LRel: Integer;
@@ -1737,81 +1731,81 @@ var
 begin
   LInputLen := Length(AInput);
 
-  while ATokenIdx <= High(ATokens) do
+  while ATokenIndex <= High(ATokens) do
   begin
-    LTok := @ATokens[ATokenIdx];
+    LTok := @ATokens[ATokenIndex];
 
     case LTok.Kind of
       tkLiteral:
         begin
           LLitLen := Length(LTok.Lit);
 
-          if AInputIdx + LLitLen - 1 > LInputLen then
+          if AInputIndex + LLitLen - 1 > LInputLen then
             Exit(False);
 
-          if not LiteralMatchesAtCI(AInput, AInputIdx, LTok.Lit) then
+          if not LiteralMatchesAtCI(AInput, AInputIndex, LTok.Lit) then
             Exit(False);
 
-          Inc(AInputIdx, LLitLen);
-          Inc(ATokenIdx);
+          Inc(AInputIndex, LLitLen);
+          Inc(ATokenIndex);
         end;
       tkAnyChar:
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(ATokenIdx);
+          Inc(AInputIndex);
+          Inc(ATokenIndex);
         end;
       tkDigit:
         begin
-          if (AInputIdx > LInputLen) or not IsAsciiDigit(AInput[AInputIdx]) then
+          if (AInputIndex > LInputLen) or not IsAsciiDigit(AInput[AInputIndex]) then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(ATokenIdx);
+          Inc(AInputIndex);
+          Inc(ATokenIndex);
         end;
       tkCharClass:
         begin
-          if AInputIdx > LInputLen then
+          if AInputIndex > LInputLen then
             Exit(False);
 
-          if not CharInCompiledClass(LTok^, FastToUpper(AInput[AInputIdx])) then
+          if not CharInCompiledClass(LTok^, FastToUpper(AInput[AInputIndex])) then
             Exit(False);
 
-          Inc(AInputIdx);
-          Inc(ATokenIdx);
+          Inc(AInputIndex);
+          Inc(ATokenIndex);
         end;
       tkAltGroup:
         begin
           if LTok.Negate then
           begin
-            for LAltIdx := 0 to High(LTok.Alts) do
+            for LAltIndex := 0 to High(LTok.Alts) do
             begin
-              LAltLen := Length(LTok.Alts[LAltIdx]);
+              LAltLen := Length(LTok.Alts[LAltIndex]);
 
               if (LAltLen = 0) or
-                 ((AInputIdx + LAltLen - 1 <= LInputLen) and
-                  LiteralMatchesAtCI(AInput, AInputIdx, LTok.Alts[LAltIdx])) then
+                 ((AInputIndex + LAltLen - 1 <= LInputLen) and
+                  LiteralMatchesAtCI(AInput, AInputIndex, LTok.Alts[LAltIndex])) then
                 Exit(False);
             end;
 
-            if (LTok.MaxAltLen > 0) and (AInputIdx + LTok.MaxAltLen - 1 > LInputLen) then
+            if (LTok.MaxAltLen > 0) and (AInputIndex + LTok.MaxAltLen - 1 > LInputLen) then
               Exit(False);
 
-            Inc(AInputIdx, LTok.MaxAltLen);
-            Inc(ATokenIdx);
+            Inc(AInputIndex, LTok.MaxAltLen);
+            Inc(ATokenIndex);
           end
           else
           begin
-            for LAltIdx := 0 to High(LTok.Alts) do
+            for LAltIndex := 0 to High(LTok.Alts) do
             begin
-              LAltLen := Length(LTok.Alts[LAltIdx]);
+              LAltLen := Length(LTok.Alts[LAltIndex]);
 
               if (LAltLen = 0) or
-                 ((AInputIdx + LAltLen - 1 <= LInputLen) and
-                  LiteralMatchesAtCI(AInput, AInputIdx, LTok.Alts[LAltIdx])) then
-                if MatchTokensCI(ATokens, AInput, AInputIdx + LAltLen, ATokenIdx + 1) then
+                 ((AInputIndex + LAltLen - 1 <= LInputLen) and
+                  LiteralMatchesAtCI(AInput, AInputIndex, LTok.Alts[LAltIndex])) then
+                if MatchTokensCI(ATokens, AInput, AInputIndex + LAltLen, ATokenIndex + 1) then
                   Exit(True);
             end;
 
@@ -1820,10 +1814,10 @@ begin
         end;
       tkStar:
         begin
-          if ATokenIdx = High(ATokens) then
+          if ATokenIndex = High(ATokens) then
             Exit(True);
 
-          LNext := @ATokens[ATokenIdx + 1];
+          LNext := @ATokens[ATokenIndex + 1];
           LMaxStart := LInputLen - LNext.MinRemain + 1;
 
           case LNext.Kind of
@@ -1831,14 +1825,14 @@ begin
               begin
                 LLitLen := Length(LNext.Lit);
 
-                if ATokenIdx + 1 = High(ATokens) then
+                if ATokenIndex + 1 = High(ATokens) then
                 begin
-                  LIdx := LInputLen - LLitLen + 1;
+                  LIndex := LInputLen - LLitLen + 1;
 
-                  if LIdx < AInputIdx then
+                  if LIndex < AInputIndex then
                     Exit(False);
 
-                  Exit(LiteralMatchesAtCI(AInput, LIdx, LNext.Lit));
+                  Exit(LiteralMatchesAtCI(AInput, LIndex, LNext.Lit));
                 end;
 
                 LChar := LNext.Lit[1];
@@ -1849,62 +1843,62 @@ begin
                 else
                   LCharPair := Cardinal(Ord(LChar)) or (Cardinal(Ord(LChar)) shl 16);
 
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  LRel := ScanCharIndexCI(PChar(Pointer(AInput)) + AInputIdx - 1, LMaxStart - AInputIdx + 1, LCharPair);
+                  LRel := ScanCharIndexCI(PChar(Pointer(AInput)) + AInputIndex - 1, LMaxStart - AInputIndex + 1, LCharPair);
                   if LRel < 0 then
                     Break;
 
-                  Inc(AInputIdx, LRel);
+                  Inc(AInputIndex, LRel);
 
                   // Candidates include non-ASCII chars - re-verify before
                   // recursing (see ScanCharIndexCI).
-                  if (AInput[AInputIdx] = LChar) or (FastToUpper(AInput[AInputIdx]) = LChar) then
-                    if MatchTokensCI(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if (AInput[AInputIndex] = LChar) or (FastToUpper(AInput[AInputIndex]) = LChar) then
+                    if MatchTokensCI(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
 {$ELSE}
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  if (AInput[AInputIdx] = LChar) or (FastToUpper(AInput[AInputIdx]) = LChar) then
-                    if MatchTokensCI(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if (AInput[AInputIndex] = LChar) or (FastToUpper(AInput[AInputIndex]) = LChar) then
+                    if MatchTokensCI(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
 {$ENDIF}
               end;
             tkDigit:
               begin
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  if IsAsciiDigit(AInput[AInputIdx]) then
-                    if MatchTokensCI(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if IsAsciiDigit(AInput[AInputIndex]) then
+                    if MatchTokensCI(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
             tkCharClass:
               begin
-                while AInputIdx <= LMaxStart do
+                while AInputIndex <= LMaxStart do
                 begin
-                  if CharInCompiledClass(LNext^, FastToUpper(AInput[AInputIdx])) then
-                    if MatchTokensCI(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+                  if CharInCompiledClass(LNext^, FastToUpper(AInput[AInputIndex])) then
+                    if MatchTokensCI(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                       Exit(True);
 
-                  Inc(AInputIdx);
+                  Inc(AInputIndex);
                 end;
               end;
           else
-            while AInputIdx <= LMaxStart do
+            while AInputIndex <= LMaxStart do
             begin
-              if MatchTokensCI(ATokens, AInput, AInputIdx, ATokenIdx + 1) then
+              if MatchTokensCI(ATokens, AInput, AInputIndex, ATokenIndex + 1) then
                 Exit(True);
 
-              Inc(AInputIdx);
+              Inc(AInputIndex);
             end;
           end;
 
@@ -1913,7 +1907,7 @@ begin
     end;
   end;
 
-  Result := AInputIdx > LInputLen;
+  Result := AInputIndex > LInputLen;
 end;
 
 function TWildCard.MatchCompiled(const ACompiled: TCompiledPattern; const AInput: string): Boolean;
@@ -1960,64 +1954,64 @@ end;
 
 class function TWildCard.Create(const APatterns: TArray<string>; const ACaseSensitive: Boolean): TWildCard;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   Result.FCaseSensitive := ACaseSensitive;
   SetLength(Result.FPatterns, Length(APatterns));
 
   if ACaseSensitive then
   begin
-    for LIdx := 0 to High(APatterns) do
-      Result.FPatterns[LIdx] := APatterns[LIdx];
+    for LIndex := 0 to High(APatterns) do
+      Result.FPatterns[LIndex] := APatterns[LIndex];
   end
   else
   begin
-    for LIdx := 0 to High(APatterns) do
-      Result.FPatterns[LIdx] := FastUpperString(APatterns[LIdx]);
+    for LIndex := 0 to High(APatterns) do
+      Result.FPatterns[LIndex] := FastUpperString(APatterns[LIndex]);
   end;
 
   SetLength(Result.FCompiled, Length(Result.FPatterns));
 
-  for LIdx := 0 to High(Result.FPatterns) do
-    Result.FCompiled[LIdx] := CompilePattern(Result.FPatterns[LIdx]);
+  for LIndex := 0 to High(Result.FPatterns) do
+    Result.FCompiled[LIndex] := CompilePattern(Result.FPatterns[LIndex]);
 end;
 
 class function TWildCard.Create(const APatterns: TStrings; const ACaseSensitive: Boolean): TWildCard;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   Result.FCaseSensitive := ACaseSensitive;
   SetLength(Result.FPatterns, APatterns.Count);
 
   if ACaseSensitive then
   begin
-    for LIdx := 0 to APatterns.Count - 1 do
-      Result.FPatterns[LIdx] := APatterns[LIdx];
+    for LIndex := 0 to APatterns.Count - 1 do
+      Result.FPatterns[LIndex] := APatterns[LIndex];
   end
   else
   begin
-    for LIdx := 0 to APatterns.Count - 1 do
-      Result.FPatterns[LIdx] := FastUpperString(APatterns[LIdx]);
+    for LIndex := 0 to APatterns.Count - 1 do
+      Result.FPatterns[LIndex] := FastUpperString(APatterns[LIndex]);
   end;
 
   SetLength(Result.FCompiled, Length(Result.FPatterns));
 
-  for LIdx := 0 to High(Result.FPatterns) do
-    Result.FCompiled[LIdx] := CompilePattern(Result.FPatterns[LIdx]);
+  for LIndex := 0 to High(Result.FPatterns) do
+    Result.FCompiled[LIndex] := CompilePattern(Result.FPatterns[LIndex]);
 end;
 
 { TWildCard - instance API: Match overloads }
 
 function TWildCard.MatchRegistered(const AInput: string): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   // Registered patterns were compiled at Create - each Match call runs the
   // token engine directly with no per-call preparation or pattern
   // re-scanning.  Index loop on purpose: for-in over a string array copies
   // each element (refcount churn).
-  for LIdx := 0 to High(FCompiled) do
-    if MatchCompiled(FCompiled[LIdx], AInput) then
+  for LIndex := 0 to High(FCompiled) do
+    if MatchCompiled(FCompiled[LIndex], AInput) then
       Exit(True);
 
   Result := False;
@@ -2069,18 +2063,18 @@ end;
 
 function TWildCard.Match(const AInput: string; const APatterns: TStrings; const AAlsoMatchRegistered: Boolean): Boolean;
 var
-  LIdx: Integer;
+  LIndex: Integer;
 begin
   if FCaseSensitive then
   begin
-    for LIdx := 0 to APatterns.Count - 1 do
-      if MatchRecursiveCS(AInput, APatterns[LIdx], 1, 1) then
+    for LIndex := 0 to APatterns.Count - 1 do
+      if MatchRecursiveCS(AInput, APatterns[LIndex], 1, 1) then
         Exit(True);
   end
   else
   begin
-    for LIdx := 0 to APatterns.Count - 1 do
-      if MatchRecursiveCI(AInput, FastUpperString(APatterns[LIdx]), 1, 1) then
+    for LIndex := 0 to APatterns.Count - 1 do
+      if MatchRecursiveCI(AInput, FastUpperString(APatterns[LIndex]), 1, 1) then
         Exit(True);
   end;
 
