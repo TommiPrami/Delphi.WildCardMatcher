@@ -54,7 +54,45 @@ left than the longest alternative, the match fails.
 character.
 
 Matching is **case-insensitive by default** (Windows convention).
-Pass `ACaseSensitive = True` for ordinal comparison.
+Pass `ACaseSensitive = True` (or `wcoCaseSensitive`) for ordinal
+comparison.
+
+### Path mode (`wcoPathMode`)
+
+By default `*` and `?` are path-agnostic - `*.pas` happily matches
+`src\deep\Unit1.pas`. Create the matcher with `[wcoPathMode]` for
+glob/gitignore-style semantics:
+
+| Token | Path mode behaviour |
+| ----- | ------------------- |
+| `*`   | Zero or more chars **within one path segment** (stops at `\` and `/`) |
+| `**`  | Zero or more chars **across** path separators |
+| `?`   | One char that is **not** a path separator |
+
+```pascal
+TWildCard.Create('src\*.pas', [wcoPathMode]).Match('src\Unit1.pas');      // True
+TWildCard.Create('src\*.pas', [wcoPathMode]).Match('src\sub\Unit1.pas');  // False - '*' stays in the segment
+TWildCard.Create('src\**\final.txt', [wcoPathMode]).Match('src\a\b\final.txt'); // True - '**' crosses
+```
+
+Separator characters in the pattern itself are literals; only the
+crossing rule treats both `\` and `/` as separators. Note that the
+separators around `**` are literal too - `src\**\x` requires at least
+one directory level between `src` and `x`.
+
+### Matching literal metacharacters
+
+Windows file names may legally contain `#`, `[` and `]`. They are
+matchable through single-char classes:
+
+| To match a literal | Write |
+| ------------------ | ----- |
+| `#`                | `[#]` |
+| `[`                | `[[]` |
+| `]`                | `[]]` |
+
+e.g. `Track [#][0-9][0-9].mp3` matches `Track #01.mp3`. (`*` and `?`
+cannot appear in Windows file names, so they need no escape.)
 
 ## Usage
 
@@ -131,6 +169,37 @@ LMask.Match(LFile, '*.dproj');           // only the ad-hoc pattern
 LMask.Match(LFile, '*.dproj', True);     // ad-hoc + registered set
 ```
 
+### Validating user-supplied masks
+
+A malformed pattern (unterminated class or quote) never matches anything
+at runtime - silently. When masks come from a settings dialog or config
+file, reject them at input time instead:
+
+```pascal
+if not TWildCard.ValidatePattern(LUserMask, LError) then
+  ShowMessage('Bad mask: ' + LError);   // e.g. 'Unterminated character class (''['' at position 5)'
+```
+
+### Which pattern matched?
+
+`Match` deliberately returns only a Boolean. When you need attribution -
+which ignore-mask excluded this file, which rule fired - use
+`MatchIndex` (0-based index into `RegisteredPatterns`, -1 for no match)
+or the filter's `AcceptsEx`:
+
+```pascal
+LIndex := LMask.MatchIndex(LFile);                            // first hit wins
+if not LFilter.AcceptsEx(LFile, LIncIdx, LExcIdx) then
+  Log('rejected by ' + LFilter.ExcludePatterns[LExcIdx]);
+```
+
+### Thread safety
+
+A `TWildCard` / `TWildCardFilter` is immutable after `Create` - `Match`,
+`MatchIndex` and `Accepts` touch no instance state. One instance can be
+shared freely across threads, so directory scans parallelize without
+locking.
+
 ### Include / exclude filtering with `TWildCardFilter`
 
 `TWildCardFilter` wraps two matchers - one list that filters IN and one
@@ -191,20 +260,33 @@ positional negation.)
 
 ```pascal
 type
+  TWildCardOption = (wcoCaseSensitive, wcoPathMode);
+  TWildCardOptions = set of TWildCardOption;
+
   TWildCard = record
   public
-    // Constructors - ACaseSensitive is locked in for the lifetime of the
-    // instance and defaults to case-insensitive (Windows convention).
-    class function Create(const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+    // Constructors - options are locked in for the lifetime of the
+    // instance; default is case-insensitive (Windows convention), no
+    // path mode.  Every overload also exists in a classic Boolean
+    // ACaseSensitive form.
+    class function Create(const AOptions: TWildCardOptions): TWildCard; overload; static;
     class function Create(const APattern: string;
-      const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+      const AOptions: TWildCardOptions): TWildCard; overload; static;
     class function Create(const APatterns: TArray<string>;
-      const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+      const AOptions: TWildCardOptions): TWildCard; overload; static;
     class function Create(const APatterns: TStrings;
-      const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+      const AOptions: TWildCardOptions): TWildCard; overload; static;
+    class function Create(const ACaseSensitive: Boolean = False): TWildCard; overload; static;
+    // ... (string / TArray / TStrings ACaseSensitive variants)
+
+    // Syntax check with a human-readable reason + 1-based position.
+    class function ValidatePattern(const APattern: string;
+      out AErrorMessage: string): Boolean; static;
 
     // Match against the registered set only
     function Match(const AInput: string): Boolean; overload;
+    // Which registered pattern matched: 0-based index, -1 = none.
+    function MatchIndex(const AInput: string): Integer;
 
     // Match against an ad-hoc pattern; AAlsoMatchRegistered=True also
     // tries the registered set after the ad-hoc one fails.
@@ -216,6 +298,7 @@ type
       const AAlsoMatchRegistered: Boolean = False): Boolean; overload;
 
     property CaseSensitive: Boolean read FCaseSensitive;
+    property PathMode: Boolean read FPathMode;
     property RegisteredPatterns: TArray<string> read FPatterns;
   end;
 
@@ -228,12 +311,21 @@ type
       const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
     class function Create(const AIncludePatterns, AExcludePatterns: TStrings;
       const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
+    // Options-based variants (options apply to BOTH lists)
+    class function Create(const AIncludePatterns, AExcludePatterns: TArray<string>;
+      const AOptions: TWildCardOptions): TWildCardFilter; overload; static;
+    class function Create(const AIncludePatterns, AExcludePatterns: TStrings;
+      const AOptions: TWildCardOptions): TWildCardFilter; overload; static;
 
     // True when AInput matches the include stage (or the include list is
     // empty) and does not match any exclude pattern.
     function Accepts(const AInput: string): Boolean;
+    // Like Accepts, but reports the deciding pattern indices (-1 = none).
+    function AcceptsEx(const AInput: string;
+      out AIncludeIndex, AExcludeIndex: Integer): Boolean;
 
     property CaseSensitive: Boolean read FCaseSensitive;
+    property PathMode: Boolean read FPathMode;
     property IncludePatterns: TArray<string> read GetIncludePatterns;
     property ExcludePatterns: TArray<string> read GetExcludePatterns;
   end;

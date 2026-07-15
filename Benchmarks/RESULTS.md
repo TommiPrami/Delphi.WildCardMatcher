@@ -20,6 +20,27 @@ cost.
 call over the whole pattern set.**  1 ns = one billionth of a second;
 100 ns/op = 10 million Match calls per second.
 
+## 2026-07-15: feature round - path mode, ValidatePattern, MatchIndex (ns/op)
+
+New features (wcoPathMode glob semantics, ValidatePattern, MatchIndex /
+AcceptsEx) touched both engines: a PathSeg flag per compiled token and an
+APathMode parameter through the interpreting engine.  Regression check,
+best of 5 (note: the harness now runs with FastMM5 + P-core affinity,
+which shifts the allocation-heavy ad-hoc CI variants vs older entries):
+
+| Scenario | registered CI | ad-hoc CI | registered CS | ad-hoc CS |
+| --- | ---: | ---: | ---: | ---: |
+| S1 single mask `*.pas` | 8.5 | 45.3 | 7.0 | 23.9 |
+| S2 8-mask ignore set | 56.6 | 226.2 | 43.0 | 99.2 |
+| S3 worst-case backtracking | 610 | 929 | 506 | 658 |
+| S4 quoted-alt mask | 161 | 923 | 113 | 766 |
+
+Registered (compiled) path: no measurable regression vs the 2026-07-03
+numbers - the per-token PathSeg check is branch-predicted away when path
+mode is off.  Suite: 106 DUnitX tests including a 40 000-comparison
+differential fuzz test (registered vs ad-hoc engines, CI/CS x path
+mode on/off, deterministic seed).
+
 ## 2026-07-03: SSE2 scan kernels (USE_SSE2 define, on by default on Win32)
 
 The '*' first-char skip loops - the hottest loops in backtracking-heavy
