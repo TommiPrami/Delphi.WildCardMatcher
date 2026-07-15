@@ -20,7 +20,23 @@ cost.
 call over the whole pattern set.**  1 ns = one billionth of a second;
 100 ns/op = 10 million Match calls per second.
 
-## 2026-07-15: feature round - path mode, ValidatePattern, MatchIndex (ns/op)
+## 2026-07-15 (b): lint round - diagnostics API, no match-path changes (ns/op)
+
+Added the Lint/diagnostics system (TWildCard.LintPattern/Lint,
+TWildCardFilter.Lint), PatternMatchesEverything, PatternCount /
+Include-/ExcludeCount, TWildCardFilter.Filter.  All of it is on-demand
+API - nothing runs during matching - and the numbers confirm it: every
+cell is within run-to-run noise of the (a) entry below.  Suite now 124
+DUnitX tests.
+
+| Scenario | registered CI | ad-hoc CI | registered CS | ad-hoc CS |
+| --- | ---: | ---: | ---: | ---: |
+| S1 single mask `*.pas` | 7.9 | 46.2 | 7.3 | 25.3 |
+| S2 8-mask ignore set | 54.5 | 234.2 | 48.3 | 102.9 |
+| S3 worst-case backtracking | 650 | 950 | 468 | 559 |
+| S4 quoted-alt mask | 166 | 932 | 114 | 781 |
+
+## 2026-07-15 (a): feature round - path mode, ValidatePattern, MatchIndex (ns/op)
 
 New features (wcoPathMode glob semantics, ValidatePattern, MatchIndex /
 AcceptsEx) touched both engines: a PathSeg flag per compiled token and an

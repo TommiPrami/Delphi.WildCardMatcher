@@ -193,6 +193,42 @@ if not LFilter.AcceptsEx(LFile, LIncIdx, LExcIdx) then
   Log('rejected by ' + LFilter.ExcludePatterns[LExcIdx]);
 ```
 
+### Warnings and hints (`Lint`)
+
+Legal patterns can still be nonsense - like filtering `*.bat` in AND out
+(exclude wins, so the include is dead). `Lint` reports compiler-style
+diagnostics: **warnings** for things that are almost certainly mistakes,
+**hints** for suspicious or redundant constructs. Nothing is computed
+during normal matching - call it from a settings dialog, a config
+loader, or a debug assertion:
+
+```pascal
+LFilter := TWildCardFilter.Create(['*.pas', '*.bat'], ['*.bat']);
+
+for var LDiagnostic in LFilter.Lint do
+  Log(LDiagnostic.Message);
+// -> Warning: Include pattern #1 '*.BAT' is also exclude pattern #0 -
+//    it can never accept anything (exclude wins)
+```
+
+What gets flagged:
+
+| Kind | Situation |
+| --- | --- |
+| Warning | Malformed pattern (never matches anything) |
+| Warning | Include pattern that is also an exclude pattern |
+| Warning | Match-everything exclude (`*`) - the filter accepts nothing |
+| Warning | Duplicate pattern in a set / pattern shadowed by an earlier `*` |
+| Warning | `[!""]` - never matches |
+| Hint | `**` without `wcoPathMode` (collapses to `*`) |
+| Hint | Match-everything include making other includes redundant |
+| Hint | Empty range `[z-a]`, duplicate alternatives `["a"\|"a"]`, lone `[""]`, empty pattern |
+
+`TWildCard.LintPattern(pattern, options)` checks a single pattern;
+`TWildCard.Lint` a registered set; `TWildCardFilter.Lint` both lists plus
+the cross-list checks. Duplicate detection is case-aware (CI mode flags
+`*.bat` vs `*.BAT`; CS mode does not).
+
 ### Thread safety
 
 A `TWildCard` / `TWildCardFilter` is immutable after `Create` - `Match`,
@@ -282,6 +318,13 @@ type
     // Syntax check with a human-readable reason + 1-based position.
     class function ValidatePattern(const APattern: string;
       out AErrorMessage: string): Boolean; static;
+    // True for patterns that match every input ('*'; in path mode '**').
+    class function PatternMatchesEverything(const APattern: string;
+      const APathMode: Boolean = False): Boolean; static;
+    // Compiler-style warnings/hints - single pattern or registered set.
+    class function LintPattern(const APattern: string;
+      const AOptions: TWildCardOptions = []): TArray<TWildCardDiagnostic>; static;
+    function Lint: TArray<TWildCardDiagnostic>;
 
     // Match against the registered set only
     function Match(const AInput: string): Boolean; overload;
@@ -299,6 +342,7 @@ type
 
     property CaseSensitive: Boolean read FCaseSensitive;
     property PathMode: Boolean read FPathMode;
+    property PatternCount: Integer read GetPatternCount;
     property RegisteredPatterns: TArray<string> read FPatterns;
   end;
 
@@ -323,9 +367,16 @@ type
     // Like Accepts, but reports the deciding pattern indices (-1 = none).
     function AcceptsEx(const AInput: string;
       out AIncludeIndex, AExcludeIndex: Integer): Boolean;
+    // The inputs Accepts would let through, in input order.
+    function Filter(const AInputs: TArray<string>): TArray<string>;
+    // Warnings/hints: per-list problems + cross-list checks (include
+    // also excluded, match-everything exclude, redundant includes).
+    function Lint: TArray<TWildCardDiagnostic>;
 
     property CaseSensitive: Boolean read FCaseSensitive;
     property PathMode: Boolean read FPathMode;
+    property IncludeCount: Integer read GetIncludeCount;
+    property ExcludeCount: Integer read GetExcludeCount;
     property IncludePatterns: TArray<string> read GetIncludePatterns;
     property ExcludePatterns: TArray<string> read GetExcludePatterns;
   end;

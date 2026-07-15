@@ -116,6 +116,30 @@ type
   TWildCardOption = (wcoCaseSensitive, wcoPathMode);
   TWildCardOptions = set of TWildCardOption;
 
+  // === Lint diagnostics ===
+  // Compiler-style warnings and hints about patterns that are legal but
+  // probably not what the author meant.  Produced on demand by
+  // TWildCard.LintPattern / TWildCard.Lint / TWildCardFilter.Lint -
+  // nothing is computed during normal matching.
+  //   wdkWarning - almost certainly a mistake (pattern can never match,
+  //     include also excluded, unreachable pattern, ...)
+  //   wdkHint - suspicious or redundant ('**' without path mode,
+  //     duplicate alternative, empty range, ...)
+  TWildCardDiagnosticKind = (wdkWarning, wdkHint);
+
+  // Which pattern list the diagnostic refers to.  TWildCard reports
+  // wdlPatterns; TWildCardFilter re-tags per-list results with
+  // wdlIncludes / wdlExcludes.
+  TWildCardDiagnosticList = (wdlPatterns, wdlIncludes, wdlExcludes);
+
+  TWildCardDiagnostic = record
+    Kind: TWildCardDiagnosticKind;
+    List: TWildCardDiagnosticList;
+    PatternIndex: Integer;   // 0-based index into the list, -1 = no list context
+    Pattern: string;         // the pattern the diagnostic refers to
+    Message: string;         // human-readable and self-contained
+  end;
+
   TWildCard = record
   strict private
   type
@@ -196,6 +220,12 @@ type
     // already in the correct form (pre-upper-cased for CI), so no per-call
     // FastUpperString work is needed here.
     function MatchRegistered(const AInput: string): Boolean;
+    // Lint plumbing.  APrepared is the engine-ready pattern text (upper-
+    // cased for CI); ADisplay is what diagnostics should show.
+    class procedure LintSinglePattern(const APrepared, ADisplay: string; const APathMode: Boolean;
+      const AList: TWildCardDiagnosticList; const APatternIndex: Integer;
+      var ADiagnostics: TArray<TWildCardDiagnostic>); static;
+    function GetPatternCount: Integer;
   public
     // === Instance API: pre-register patterns + match many inputs ===
     // ACaseSensitive is locked in for the lifetime of the instance and
@@ -223,6 +253,18 @@ type
     // input time (settings dialogs, config files) instead.
     class function ValidatePattern(const APattern: string; out AErrorMessage: string): Boolean; static;
 
+    // True when APattern matches every possible input: a run of '*'s
+    // (in path mode a run of at least two - a single '*' cannot cross
+    // separators there).
+    class function PatternMatchesEverything(const APattern: string; const APathMode: Boolean = False): Boolean; static;
+
+    // Compiler-style warnings and hints for a single pattern / for the
+    // registered set.  Empty result = nothing suspicious.  See
+    // TWildCardDiagnostic.  AOptions matter: '**' is meaningful only
+    // with wcoPathMode, duplicate detection is case-aware, etc.
+    class function LintPattern(const APattern: string; const AOptions: TWildCardOptions = []): TArray<TWildCardDiagnostic>; static;
+    function Lint: TArray<TWildCardDiagnostic>;
+
     // Match against the registered set only.
     function Match(const AInput: string): Boolean; overload;
     // Like Match(AInput), but reports WHICH registered pattern matched:
@@ -235,6 +277,9 @@ type
     function Match(const AInput: string; const APatterns: TStrings; const AAlsoMatchRegistered: Boolean = False): Boolean; overload;
     property CaseSensitive: Boolean read FCaseSensitive;
     property PathMode: Boolean read FPathMode;
+    // Number of registered patterns - cheaper than Length(RegisteredPatterns),
+    // which copies the array.
+    property PatternCount: Integer read GetPatternCount;
     property RegisteredPatterns: TArray<string> read FPatterns;
   end;
 
@@ -271,6 +316,8 @@ type
     FPathMode: Boolean;
     function GetIncludePatterns: TArray<string>;
     function GetExcludePatterns: TArray<string>;
+    function GetIncludeCount: Integer;
+    function GetExcludeCount: Integer;
   public
     class function Create(const ACaseSensitive: Boolean = False): TWildCardFilter; overload; static;
     class function Create(const AIncludePattern, AExcludePattern: string; const ACaseSensitive: Boolean = False): TWildCardFilter;
@@ -296,8 +343,21 @@ type
     //     the input, or -1 when no exclude pattern matched.
     function AcceptsEx(const AInput: string; out AIncludeIndex, AExcludeIndex: Integer): Boolean;
 
+    // Returns the inputs Accepts would let through, in input order.
+    function Filter(const AInputs: TArray<string>): TArray<string>;
+
+    // Compiler-style warnings and hints about the filter configuration:
+    // per-list pattern problems (re-tagged wdlIncludes / wdlExcludes) plus
+    // cross-list checks - an include pattern that is also excluded can
+    // never accept anything (exclude wins), a match-everything exclude
+    // rejects every input, a match-everything include makes the other
+    // includes redundant.  Empty result = nothing suspicious.
+    function Lint: TArray<TWildCardDiagnostic>;
+
     property CaseSensitive: Boolean read FCaseSensitive;
     property PathMode: Boolean read FPathMode;
+    property IncludeCount: Integer read GetIncludeCount;
+    property ExcludeCount: Integer read GetExcludeCount;
     property IncludePatterns: TArray<string> read GetIncludePatterns;
     property ExcludePatterns: TArray<string> read GetExcludePatterns;
   end;
@@ -436,10 +496,11 @@ end;
 // ScanCharIndexCI: 0-based index of the first CANDIDATE position in
 // AText[0..ACount-1], or -1.  AChars packs the pre-upper-cased pattern
 // char in the LOW word and its ASCII-lowercase variant in the HIGH word.
-// A candidate is a char equal to either variant, or ANY char >= U+0080
-// (non-ASCII needs the scalar Unicode ToUpper check - e.g. U+017F upper-
-// cases to 'S', which a two-value compare would miss).  The caller MUST
-// re-verify the candidate with the scalar test before recursing.
+// A candidate is a char equal to either variant, or ANY char >= U+0080 -
+// non-ASCII needs the scalar Unicode ToUpper check, e.g. input 'ä' has to
+// match a pattern char 'Ä' even though it equals neither packed value.
+// The caller MUST re-verify the candidate with the scalar test before
+// recursing.
 function ScanCharIndexCI(AText: PChar; const ACount: Integer; const AChars: Cardinal): Integer;
 asm
   // EAX = AText, EDX = ACount, ECX = AChars (low = upper, high = lower)
@@ -618,6 +679,168 @@ begin
   end;
 
   Result := True;
+end;
+
+// Shared by TWildCard and TWildCardFilter lint code - implementation-only.
+procedure AppendWildCardDiagnostic(var ADiagnostics: TArray<TWildCardDiagnostic>; const AKind: TWildCardDiagnosticKind;
+  const AList: TWildCardDiagnosticList; const APatternIndex: Integer; const APattern, AMessage: string);
+begin
+  SetLength(ADiagnostics, Length(ADiagnostics) + 1);
+
+  ADiagnostics[High(ADiagnostics)].Kind := AKind;
+  ADiagnostics[High(ADiagnostics)].List := AList;
+  ADiagnostics[High(ADiagnostics)].PatternIndex := APatternIndex;
+  ADiagnostics[High(ADiagnostics)].Pattern := APattern;
+  ADiagnostics[High(ADiagnostics)].Message := AMessage;
+end;
+
+class function TWildCard.PatternMatchesEverything(const APattern: string; const APathMode: Boolean): Boolean;
+var
+  LIndex: Integer;
+begin
+  if APattern = '' then
+    Exit(False);
+
+  for LIndex := 1 to Length(APattern) do
+    if APattern[LIndex] <> '*' then
+      Exit(False);
+
+  // In path mode a single '*' cannot cross separators; a run of two or
+  // more can (globstar).
+  Result := (not APathMode) or (Length(APattern) >= 2);
+end;
+
+class procedure TWildCard.LintSinglePattern(const APrepared, ADisplay: string; const APathMode: Boolean;
+  const AList: TWildCardDiagnosticList; const APatternIndex: Integer; var ADiagnostics: TArray<TWildCardDiagnostic>);
+var
+  LError: string;
+  LCompiled: TCompiledPattern;
+  LIndex, LRun, LMaxRun: Integer;
+  LTokenIndex, LRangeIndex, LAltIndex, LOtherIndex: Integer;
+begin
+  // Malformed pattern: one warning, nothing else worth analysing.
+  if not ValidatePattern(APrepared, LError) then
+  begin
+    AppendWildCardDiagnostic(ADiagnostics, wdkWarning, AList, APatternIndex, ADisplay,
+      Format('Pattern ''%s'' never matches anything - %s', [ADisplay, LError]));
+    Exit;
+  end;
+
+  if APrepared = '' then
+  begin
+    AppendWildCardDiagnostic(ADiagnostics, wdkHint, AList, APatternIndex, ADisplay,
+      'Pattern is empty - it matches only the empty string');
+    Exit;
+  end;
+
+  // Star runs are collapsed by the tokenizer, so scan the text.
+  LMaxRun := 0;
+  LRun := 0;
+
+  for LIndex := 1 to Length(APrepared) do
+    if APrepared[LIndex] = '*' then
+    begin
+      Inc(LRun);
+
+      if LRun > LMaxRun then
+        LMaxRun := LRun;
+    end
+    else
+      LRun := 0;
+
+  if (LMaxRun >= 2) and not APathMode then
+    AppendWildCardDiagnostic(ADiagnostics, wdkHint, AList, APatternIndex, ADisplay,
+      Format('Pattern ''%s'': consecutive ''*'' collapse to a single ''*'' - ''**'' only has globstar meaning with wcoPathMode',
+      [ADisplay]))
+  else if (LMaxRun >= 3) and APathMode then
+    AppendWildCardDiagnostic(ADiagnostics, wdkHint, AList, APatternIndex, ADisplay,
+      Format('Pattern ''%s'': a run of three or more ''*'' behaves the same as ''**''', [ADisplay]));
+
+  // Token-level checks: empty ranges, duplicate / degenerate alternatives.
+  LCompiled := CompilePattern(APrepared, APathMode);
+
+  for LTokenIndex := 0 to High(LCompiled.Tokens) do
+    case LCompiled.Tokens[LTokenIndex].Kind of
+      tkCharClass:
+        for LRangeIndex := 0 to High(LCompiled.Tokens[LTokenIndex].Ranges) do
+          if LCompiled.Tokens[LTokenIndex].Ranges[LRangeIndex].Lo > LCompiled.Tokens[LTokenIndex].Ranges[LRangeIndex].Hi then
+            AppendWildCardDiagnostic(ADiagnostics, wdkHint, AList, APatternIndex, ADisplay,
+              Format('Pattern ''%s'': range ''%s-%s'' in character class is empty (low > high)',
+              [ADisplay, LCompiled.Tokens[LTokenIndex].Ranges[LRangeIndex].Lo,
+               LCompiled.Tokens[LTokenIndex].Ranges[LRangeIndex].Hi]));
+      tkAltGroup:
+        begin
+          // A negated alternation whose alternatives are all empty can
+          // never match (the empty alternative is a prefix everywhere).
+          if LCompiled.Tokens[LTokenIndex].Negate and (LCompiled.Tokens[LTokenIndex].MaxAltLen = 0) then
+            AppendWildCardDiagnostic(ADiagnostics, wdkWarning, AList, APatternIndex, ADisplay,
+              Format('Pattern ''%s'': ''[!""]'' never matches - the empty alternative is a prefix of everything', [ADisplay]))
+          else if (Length(LCompiled.Tokens[LTokenIndex].Alts) = 1) and (LCompiled.Tokens[LTokenIndex].Alts[0] = '')
+            and not LCompiled.Tokens[LTokenIndex].Negate then
+            AppendWildCardDiagnostic(ADiagnostics, wdkHint, AList, APatternIndex, ADisplay,
+              Format('Pattern ''%s'': ''[""]'' matches zero characters - it has no effect', [ADisplay]));
+
+          for LAltIndex := 1 to High(LCompiled.Tokens[LTokenIndex].Alts) do
+            for LOtherIndex := 0 to LAltIndex - 1 do
+              if LCompiled.Tokens[LTokenIndex].Alts[LAltIndex] = LCompiled.Tokens[LTokenIndex].Alts[LOtherIndex] then
+              begin
+                AppendWildCardDiagnostic(ADiagnostics, wdkHint, AList, APatternIndex, ADisplay,
+                  Format('Pattern ''%s'': duplicate alternative ''%s''',
+                  [ADisplay, LCompiled.Tokens[LTokenIndex].Alts[LAltIndex]]));
+                Break;
+              end;
+        end;
+    end;
+end;
+
+class function TWildCard.LintPattern(const APattern: string; const AOptions: TWildCardOptions): TArray<TWildCardDiagnostic>;
+var
+  LPrepared: string;
+begin
+  Result := nil;
+
+  if wcoCaseSensitive in AOptions then
+    LPrepared := APattern
+  else
+    LPrepared := FastUpperString(APattern);
+
+  LintSinglePattern(LPrepared, APattern, wcoPathMode in AOptions, wdlPatterns, -1, Result);
+end;
+
+function TWildCard.Lint: TArray<TWildCardDiagnostic>;
+var
+  LIndex, LOtherIndex: Integer;
+begin
+  Result := nil;
+
+  for LIndex := 0 to High(FPatterns) do
+    LintSinglePattern(FPatterns[LIndex], FPatterns[LIndex], FPathMode, wdlPatterns, LIndex, Result);
+
+  // Duplicates: the later copy can never be the first match.
+  for LIndex := 1 to High(FPatterns) do
+    for LOtherIndex := 0 to LIndex - 1 do
+      if FPatterns[LIndex] = FPatterns[LOtherIndex] then
+      begin
+        AppendWildCardDiagnostic(Result, wdkWarning, wdlPatterns, LIndex, FPatterns[LIndex],
+          Format('Pattern #%d ''%s'' duplicates pattern #%d - it can never be the first match',
+          [LIndex, FPatterns[LIndex], LOtherIndex]));
+        Break;
+      end;
+
+  // An earlier match-everything pattern makes every later one unreachable.
+  for LIndex := 0 to High(FPatterns) - 1 do
+    if PatternMatchesEverything(FPatterns[LIndex], FPathMode) then
+    begin
+      AppendWildCardDiagnostic(Result, wdkWarning, wdlPatterns, LIndex, FPatterns[LIndex],
+        Format('Pattern #%d ''%s'' matches everything - the %d pattern(s) after it are unreachable',
+        [LIndex, FPatterns[LIndex], High(FPatterns) - LIndex]));
+      Break;
+    end;
+end;
+
+function TWildCard.GetPatternCount: Integer;
+begin
+  Result := Length(FPatterns);
 end;
 
 class function TWildCard.FindClassEnd(const APattern: string; const AStart: Integer; var AIsQuotedAlt: Boolean): Integer;
@@ -2583,6 +2806,89 @@ begin
   Result := AExcludeIndex < 0;
 end;
 
+function TWildCardFilter.Filter(const AInputs: TArray<string>): TArray<string>;
+var
+  LIndex, LCount: Integer;
+begin
+  SetLength(Result, Length(AInputs));
+  LCount := 0;
+
+  for LIndex := 0 to High(AInputs) do
+    if Accepts(AInputs[LIndex]) then
+    begin
+      Result[LCount] := AInputs[LIndex];
+      Inc(LCount);
+    end;
+
+  SetLength(Result, LCount);
+end;
+
+function TWildCardFilter.Lint: TArray<TWildCardDiagnostic>;
+var
+  LInner: TArray<TWildCardDiagnostic>;
+  LIncludes, LExcludes: TArray<string>;
+  LIndex, LOtherIndex: Integer;
+begin
+  Result := nil;
+
+  // Per-list pattern analysis, re-tagged with the list it came from.
+  LInner := FInclude.Lint;
+
+  for LIndex := 0 to High(LInner) do
+  begin
+    LInner[LIndex].List := wdlIncludes;
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := LInner[LIndex];
+  end;
+
+  LInner := FExclude.Lint;
+
+  for LIndex := 0 to High(LInner) do
+  begin
+    LInner[LIndex].List := wdlExcludes;
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := LInner[LIndex];
+  end;
+
+  LIncludes := FInclude.RegisteredPatterns;
+  LExcludes := FExclude.RegisteredPatterns;
+
+  // An include pattern that is also an exclude pattern can never accept
+  // anything - exclude always wins.  (The classic mistake: '*.bat' in
+  // both lists.)  Both lists are prepared identically, so a plain string
+  // compare is case-mode aware.
+  for LIndex := 0 to High(LIncludes) do
+    for LOtherIndex := 0 to High(LExcludes) do
+      if LIncludes[LIndex] = LExcludes[LOtherIndex] then
+      begin
+        AppendWildCardDiagnostic(Result, wdkWarning, wdlIncludes, LIndex, LIncludes[LIndex],
+          Format('Include pattern #%d ''%s'' is also exclude pattern #%d - it can never accept anything (exclude wins)',
+          [LIndex, LIncludes[LIndex], LOtherIndex]));
+        Break;
+      end;
+
+  // A match-everything exclude rejects every input.
+  for LIndex := 0 to High(LExcludes) do
+    if TWildCard.PatternMatchesEverything(LExcludes[LIndex], FPathMode) then
+    begin
+      AppendWildCardDiagnostic(Result, wdkWarning, wdlExcludes, LIndex, LExcludes[LIndex],
+        Format('Exclude pattern #%d ''%s'' matches everything - the filter accepts nothing', [LIndex, LExcludes[LIndex]]));
+      Break;
+    end;
+
+  // A match-everything include makes every other include redundant
+  // (regardless of order - the include stage only asks "does any match").
+  if Length(LIncludes) > 1 then
+    for LIndex := 0 to High(LIncludes) do
+      if TWildCard.PatternMatchesEverything(LIncludes[LIndex], FPathMode) then
+      begin
+        AppendWildCardDiagnostic(Result, wdkHint, wdlIncludes, LIndex, LIncludes[LIndex],
+          Format('Include pattern #%d ''%s'' matches everything - the other include patterns are redundant',
+          [LIndex, LIncludes[LIndex]]));
+        Break;
+      end;
+end;
+
 function TWildCardFilter.GetIncludePatterns: TArray<string>;
 begin
   Result := FInclude.RegisteredPatterns;
@@ -2591,6 +2897,16 @@ end;
 function TWildCardFilter.GetExcludePatterns: TArray<string>;
 begin
   Result := FExclude.RegisteredPatterns;
+end;
+
+function TWildCardFilter.GetIncludeCount: Integer;
+begin
+  Result := FInclude.PatternCount;
+end;
+
+function TWildCardFilter.GetExcludeCount: Integer;
+begin
+  Result := FExclude.PatternCount;
 end;
 
 end.
