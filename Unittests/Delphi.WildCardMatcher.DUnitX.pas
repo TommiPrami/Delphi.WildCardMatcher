@@ -57,6 +57,10 @@ type
     procedure DigitRunMatchesSeveralDigitsTest;
     [Test]
     procedure DigitRunEdgeCasesTest;
+    [Test]
+    procedure SequenceMixesDigitsAndAnyCharTest;
+    [Test]
+    procedure SequenceEquivalentFormsTest;
 
     { Edge cases }
     [Test]
@@ -309,6 +313,16 @@ implementation
 uses
   System.Classes, System.SysUtils;
 
+{ Fuzzing random source - shared by the fuzz and equivalence tests }
+
+function FuzzNextRandom(var ASeed: Cardinal; const ARange: Cardinal): Cardinal;
+begin
+  // Deterministic LCG (Numerical Recipes constants) - keeps the fuzz run
+  // reproducible regardless of the RTL's global Random state.
+  ASeed := (ASeed * 1664525) + 1013904223;
+  Result := (ASeed shr 16) mod ARange;
+end;
+
 { Spec example 1: '*' }
 
 procedure TWildCardMatcherDUnitX.AsteriskMatchesAnyNumberOfCharsTest;
@@ -494,6 +508,119 @@ begin
   // Unterminated digit run is a malformed class - never matches.
   Assert.IsFalse(TWildCard.Create.Match('12', '<##'));
   Assert.IsFalse(TWildCard.Create('<##').Match('12'));
+end;
+
+procedure TWildCardMatcherDUnitX.SequenceMixesDigitsAndAnyCharTest;
+var
+  LError: string;
+begin
+  // '<?##>': any one character, then two digits.
+  Assert.IsTrue (TWildCard.Create.Match('x12.txt', '<?##>.txt'));
+  Assert.IsTrue (TWildCard.Create('<?##>.txt').Match('912.txt'), 'registered engine');
+  Assert.IsFalse(TWildCard.Create.Match('12.txt',  '<?##>.txt'), '? needs a character of its own');
+  Assert.IsFalse(TWildCard.Create.Match('x1a.txt', '<?##>.txt'), 'a is not a digit');
+  Assert.IsFalse(TWildCard.Create('<?##>.txt').Match('xy12.txt'));
+
+  // Order matters: '<#?#>' is digit, any, digit.
+  Assert.IsTrue (TWildCard.Create.Match('1x2', '<#?#>'));
+  Assert.IsFalse(TWildCard.Create.Match('x12', '<#?#>'));
+  Assert.IsTrue (TWildCard.Create('<#?#>').Match('1-2'));
+
+  // '<?>' alone is the same as '?'.
+  Assert.IsTrue (TWildCard.Create.Match('a', '<?>'));
+  Assert.IsFalse(TWildCard.Create.Match('',  '<?>'));
+  Assert.IsFalse(TWildCard.Create('<?>').Match('ab'));
+
+  // Path mode: a '?' in a sequence does not match a separator, like a bare '?'.
+  Assert.IsFalse(TWildCard.Create([wcoPathMode]).Match('a\12', 'a<?##>'));
+  Assert.IsFalse(TWildCard.Create('a<?##>', [wcoPathMode]).Match('a\12'));
+  Assert.IsTrue (TWildCard.Create.Match('a\12', 'a<?##>'), 'without path mode ? matches the separator');
+
+  // '?' mixed with other members, or after '!', is a plain class.
+  Assert.IsTrue (TWildCard.Create.Match('a', '<?a>'));
+  Assert.IsFalse(TWildCard.Create.Match('b', '<?a>'), '<?a> is the set {?, a}');
+  Assert.IsTrue (TWildCard.Create.Match('b', '<!?>'));
+  Assert.IsFalse(TWildCard.Create.Match('?', '<!?>'));
+
+  Assert.IsTrue(TWildCard.ValidatePattern('<?##>.txt', LError), LError);
+end;
+
+procedure TWildCardMatcherDUnitX.SequenceEquivalentFormsTest;
+const
+  SEED = 20261014;
+  ITERATIONS = 2000;
+  // Digit-heavy fragments so the masks get real hits, not just agreement
+  // on "no match".
+  INPUT_FRAGMENTS: array[0..9] of string = ('A', 'x', '1', '2', '7', '\', '.t', '#', '?', 'A1');
+  MODE_OPTIONS: array[0..3] of TWildCardOptions = ([], [wcoCaseSensitive], [wcoPathMode], [wcoCaseSensitive, wcoPathMode]);
+  // Each row lists spellings of the same pattern; all must agree on
+  // every input, in both engines and every mode.
+  EQUIVALENT_FORMS: array[0..5] of array[0..3] of string = (
+    ('A*<##>.txt',    'A*<#><#>.txt',   'A*<#><#>.txt',  'A*<#><#>.txt'),
+    ('<?##>.txt',     '<?><##>.txt',    '?<##>.txt',     '?<#><#>.txt'),
+    ('*<#?#>*',       '*<#>?<#>*',      '*<#><?><#>*',   '*<#>?<#>*'),
+    ('*<??>*',        '*??*',           '*<?><?>*',      '*<?>?*'),
+    ('*A<###>*',      '*A<#><#><#>*',   '*A<##><#>*',    '*A<#><##>*'),
+    ('**<?#>\*',      '**?<#>\*',       '**<?><#>\*',    '**?<#>\*'));
+var
+  LSeed: Cardinal;
+  LIteration, LIndex, LLen, LMode, LRow, LForm: Integer;
+  LInput: string;
+  LExpected: Boolean;
+  LHits: array[0..High(EQUIVALENT_FORMS)] of Integer;
+  LMatchers: array[0..High(EQUIVALENT_FORMS), 0..3, 0..High(MODE_OPTIONS)] of TWildCard;
+begin
+  FillChar(LHits, SizeOf(LHits), 0);
+
+  // The user-facing promise: '<##>' and '<#><#>' (and '<?##>' and
+  // '<?><##>') are the same pattern - '<...>' only marks the region.
+  Assert.AreEqual(TWildCard.Create.Match('A12.txt', 'A*<##>.txt'), TWildCard.Create.Match('A12.txt', 'A*<#><#>.txt'));
+  Assert.IsTrue (TWildCard.Create.Match('Abc12.txt', 'A*<##>.txt'));
+  Assert.IsTrue (TWildCard.Create.Match('Abc12.txt', 'A*<#><#>.txt'));
+  Assert.IsTrue (TWildCard.Create.Match('x12.txt', '<?##>.txt'));
+  Assert.IsTrue (TWildCard.Create.Match('x12.txt', '<?><##>.txt'));
+
+  for LRow := 0 to High(EQUIVALENT_FORMS) do
+    for LForm := 0 to 3 do
+      for LMode := 0 to High(MODE_OPTIONS) do
+        LMatchers[LRow, LForm, LMode] := TWildCard.Create(EQUIVALENT_FORMS[LRow, LForm], MODE_OPTIONS[LMode]);
+
+  LSeed := SEED;
+
+  for LIteration := 1 to ITERATIONS do
+  begin
+    LLen := FuzzNextRandom(LSeed, 6);
+    LInput := '';
+
+    for LIndex := 1 to LLen do
+      LInput := LInput + INPUT_FRAGMENTS[FuzzNextRandom(LSeed, Length(INPUT_FRAGMENTS))];
+
+    if FuzzNextRandom(LSeed, 2) = 0 then
+      LInput := LInput + '.txt';
+
+    for LRow := 0 to High(EQUIVALENT_FORMS) do
+      for LMode := 0 to High(MODE_OPTIONS) do
+      begin
+        LExpected := TWildCard.Create(MODE_OPTIONS[LMode]).Match(LInput, EQUIVALENT_FORMS[LRow, 0]);
+
+        if LExpected then
+          Inc(LHits[LRow]);
+
+        for LForm := 0 to 3 do
+        begin
+          Assert.AreEqual(LExpected, TWildCard.Create(MODE_OPTIONS[LMode]).Match(LInput, EQUIVALENT_FORMS[LRow, LForm]),
+            Format('ad-hoc: <%s> vs <%s> disagree on input <%s> (mode %d)',
+            [EQUIVALENT_FORMS[LRow, 0], EQUIVALENT_FORMS[LRow, LForm], LInput, LMode]));
+          Assert.AreEqual(LExpected, LMatchers[LRow, LForm, LMode].Match(LInput),
+            Format('registered: <%s> vs <%s> disagree on input <%s> (mode %d)',
+            [EQUIVALENT_FORMS[LRow, 0], EQUIVALENT_FORMS[LRow, LForm], LInput, LMode]));
+        end;
+      end;
+  end;
+
+  // Agreeing on "no match" everywhere would prove nothing.
+  for LRow := 0 to High(EQUIVALENT_FORMS) do
+    Assert.IsTrue(LHits[LRow] >= 20, Format('<%s> matched only %d random inputs', [EQUIVALENT_FORMS[LRow, 0], LHits[LRow]]));
 end;
 
 { Edge cases }
@@ -1668,14 +1795,6 @@ begin
 end;
 
 { Differential fuzzing helpers }
-
-function FuzzNextRandom(var ASeed: Cardinal; const ARange: Cardinal): Cardinal;
-begin
-  // Deterministic LCG (Numerical Recipes constants) - keeps the fuzz run
-  // reproducible regardless of the RTL's global Random state.
-  ASeed := (ASeed * 1664525) + 1013904223;
-  Result := (ASeed shr 16) mod ARange;
-end;
 
 function FuzzRandomPattern(var ASeed: Cardinal): string;
 const
